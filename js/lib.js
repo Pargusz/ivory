@@ -9,12 +9,12 @@ export const EX = 8; // explicit
 
 export const SOURCES = [
   { bit: FL, label: 'Sık dinlenenler', short: 'sık dinlediği' },
-  { bit: PL, label: 'Oluşturduğu listeler', short: 'kendi listesinde' },
+  { bit: PL, label: 'Listeleri ve beğendikleri', short: 'kendi listesinde' },
   { bit: AL, label: 'Kayıtlı albümler', short: 'kayıtlı albümünde' },
 ];
 
 const CHUNK = 180;
-export const MAX_TRACKS = 3000;
+export const MAX_TRACKS = 6000;
 
 export function makeTrack({ id, name = '', artists = '', img = '', dur = 0, isrc = '' }) {
   return { id, name, artists, img, dur, f: 0, key: songKey(name, artists), ik: isrcKey(isrc) };

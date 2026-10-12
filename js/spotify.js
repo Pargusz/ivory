@@ -16,11 +16,18 @@ const SCOPES = [
   'playlist-modify-private',
   'user-read-playback-state',
   'user-modify-playback-state',
+  // Sekme içi oynatıcı (Web Playback SDK) bu üçünü ister.
+  'streaming',
+  'user-read-email',
+  'user-read-private',
 ].join(' ');
 
-const MAX_PLAYLISTS = 30;
-const PAGES_PER_PLAYLIST = 3;
-const ALBUM_PAGES = 3;
+// Sınırlar yalnızca uç durumlar için: sıradan bir kütüphane bunlara takılmadan tümüyle okunur.
+const MAX_PLAYLISTS = 200;
+const PLAYLIST_PAGES = 10; // sayfa başına 50 liste
+const PAGES_PER_PLAYLIST = 30; // sayfa başına 50 şarkı
+const LIKED_PAGES = 80;
+const ALBUM_PAGES = 20;
 
 export class SpotifyError extends Error {
   constructor(status, message, reason) {
@@ -45,6 +52,8 @@ export const configured = () => clientIds.length > 0;
 export const groupCount = () => clientIds.length;
 export const authed = () => !!auth?.refresh;
 export const user = () => auth?.user || null;
+// Eski girişlerde "streaming" izni yoktur; sekme içi oynatıcı için yeniden bağlanmak gerekir.
+export const canStream = () => /\bstreaming\b/.test(auth?.scope || '');
 export const group = () => auth?.idx ?? ls.get('group', 0);
 
 // Spotify panelinde kayıtlı olması gereken adres: sitenin klasörü, sonunda / ile.
@@ -96,6 +105,7 @@ function storeToken(idx, data, previous) {
     refresh: data.refresh_token || previous?.refresh,
     exp: Date.now() + (data.expires_in || 3600) * 1000,
     user: previous?.user || null,
+    scope: data.scope ?? previous?.scope ?? '',
   };
   ls.set('auth', auth);
 }
@@ -141,6 +151,12 @@ function refresh() {
     refreshing = null;
   });
   return refreshing;
+}
+
+export async function accessToken() {
+  if (!auth) throw new SpotifyError(401, 'Spotify bağlı değil');
+  if (Date.now() > auth.exp - 60000) await refresh();
+  return auth.access;
 }
 
 async function api(path, { method = 'GET', body, attempt = 0 } = {}) {
@@ -201,7 +217,7 @@ async function pool(items, size, worker) {
 async function listOwnPlaylists(me) {
   const own = [];
   let url = '/me/playlists?limit=50';
-  for (let page = 0; url && page < 6; page++) {
+  for (let page = 0; url && page < PLAYLIST_PAGES; page++) {
     const data = await api(url);
     for (const p of data.items || []) if (p?.owner?.id === me.id) own.push({ id: p.id, name: p.name });
     url = data.next;
@@ -265,9 +281,30 @@ export async function loadLibrary(progress = () => {}) {
   await step('Çalma listeleri', async () => {
     // Oyunda kaydedilen şarkıların listesi başkalarının şarkılarıyla dolu; onu sayma.
     const lists = (await listOwnPlaylists(me)).filter((p) => p.name !== saveListName).slice(0, MAX_PLAYLISTS);
-    await pool(lists, 3, async (p) => {
-      await playlistItems(p.id, (t) => add(map, t, PL));
+    // Tek bir liste okunamazsa (silinmiş, kısıtlı) diğerleri yine okunsun.
+    let failed = 0;
+    await pool(lists, 4, async (p) => {
+      try {
+        await playlistItems(p.id, (t) => add(map, t, PL));
+      } catch (e) {
+        if (e.status === 401) throw e;
+        failed++;
+      }
       progress({ label: 'Çalma listeleri', count: map.size });
+    });
+    if (lists.length && failed === lists.length) throw new SpotifyError(0, 'listeler okunamadı');
+  });
+
+  // Beğenilen Şarkılar da oyuncunun kendi listesi sayılır.
+  await step('Beğenilen şarkılar', async () => {
+    const first = await api('/me/tracks?limit=50');
+    for (const it of first.items || []) add(map, it.track, PL);
+    const offsets = [];
+    for (let o = 50; o < Math.min(first.total || 0, LIKED_PAGES * 50); o += 50) offsets.push(o);
+    await pool(offsets, 4, async (o) => {
+      const page = await api('/me/tracks?limit=50&offset=' + o);
+      for (const it of page.items || []) add(map, it.track, PL);
+      progress({ label: 'Beğenilen şarkılar', count: map.size });
     });
   });
 
@@ -312,6 +349,8 @@ export const transfer = (id) => api('/me/player', { method: 'PUT', body: { devic
 export const play = (id, uri, positionMs) =>
   api('/me/player/play?device_id=' + encodeURIComponent(id), { method: 'PUT', body: { uris: [uri], position_ms: positionMs || 0 } });
 export const pause = (id) => api('/me/player/pause' + (id ? '?device_id=' + encodeURIComponent(id) : ''), { method: 'PUT' });
+export const volume = (id, percent) =>
+  api('/me/player/volume?volume_percent=' + percent + (id ? '&device_id=' + encodeURIComponent(id) : ''), { method: 'PUT' });
 export const playerState = () => api('/me/player');
 
 // Çalan şarkıyı oyuncunun kendi "Ivory" listesine ekler; liste yoksa oluşturur.

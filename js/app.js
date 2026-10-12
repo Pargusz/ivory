@@ -424,7 +424,8 @@ async function refreshDevices(auto = false) {
   app.devBusy = true;
   update();
   try {
-    app.devices = await spotify.devices();
+    // Bu sekmenin kendi oynatıcısı da Spotify'da cihaz olarak görünür; listede gösterme.
+    app.devices = (await spotify.devices()).filter((d) => d.id !== playback.localId);
   } catch {
     app.devices = [];
   }
@@ -579,12 +580,14 @@ const actions = {
     playback.setMode('device', id);
     update();
   },
+  unmute: () => playback.resume(),
   'copy-uri': async () => {
     toast((await copyText(spotify.redirectUri())) ? 'Adres kopyalandı' : 'Kopyalanamadı', 'good');
   },
 };
 
 const models = {
+  vol: (value) => playback.setVolume(value / 100),
   code: (value, el) => {
     app.code = cleanCode(value);
     if (el.value !== app.code) el.value = app.code;
@@ -979,7 +982,18 @@ function playView(st) {
   const listeners = new Set(reveal ? rd.ls : []);
   const mine = new Set(reveal ? rd.vt?.[me.id] || [] : app.ballot);
   const demo = isDemo(rd.id);
-  const embedOn = !demo && (playback.mode !== 'none' || !m);
+  const embedOn = !demo && playback.via !== 'local' && (playback.mode !== 'none' || !m);
+  // Ses ayarlı sekme oynatıcısı yerine gömülü oynatıcıya düşüldüyse nedenini söyle.
+  let noVol = '';
+  if (embedOn && playback.via === 'embed' && spotify.authed()) {
+    noVol = !spotify.canStream()
+      ? 'Ses düzeyi ayarı için odadan çık, “Hesabı değiştir”e basıp Spotify\'a yeniden bağlan (yeni izin gerekiyor).'
+      : playback.localWhy
+        ? 'Ses ayarlı oynatıcı açılamadı: ' + esc(playback.localWhy)
+        : '';
+  }
+  const volOn = !demo && playback.mode !== 'none' && playback.canVolume;
+  const stuck = volOn && playback.via === 'local' && playback.status === 'blocked';
   const canSave = !demo && spotify.authed();
   const saved = app.savedRound === rd.n;
 
@@ -1033,6 +1047,11 @@ function playView(st) {
       <div class="embed-wrap ${embedOn ? '' : 'hidden'}">
         <div id="embed" data-key="embed" data-keep></div>
         ${embedOn && playback.status === 'blocked' && playback.mode !== 'none' ? '<p class="note">Ses gelmiyorsa oynatıcıdaki ▶ düğmesine bir kez dokun.</p>' : ''}
+        ${noVol ? `<p class="note">${noVol}</p>` : ''}
+      </div>
+      <div class="vol ${volOn ? '' : 'hidden'}" data-key="vol">
+        <label>${icon('sound')}<input type="range" min="0" max="100" step="1" value="${Math.round(playback.level * 100)}" data-model="vol" aria-label="Ses düzeyi"></label>
+        ${stuck ? '<button class="btn sm ghost" data-act="unmute">Sesi başlat</button>' : ''}
       </div>
       <div class="dock">${cta}</div>
     </div>
@@ -1096,11 +1115,12 @@ function devicePicker() {
     <div class="devs">
       ${list.map((d) => row(mode === 'device' && playback.device === d.id, `data-act="dev-pick" data-id="${esc(d.id)}"`, esc(d.name), d.is_active ? 'şu an açık' : 'uykuda')).join('')}
       ${app.devBusy && !list.length ? '<div class="loading"><span class="spinner"></span><div><b>Spotify cihazların aranıyor…</b></div></div>' : ''}
-      ${row(mode === 'web', 'data-act="audio-mode" data-v="web"', 'Bu sekmede çal', 'cihaz gerekmez')}
+      ${row(mode === 'web', 'data-act="audio-mode" data-v="web"', 'Bu sekmede çal', spotify.authed() && spotify.canStream() ? 'ses ayarlı · Premium' : 'cihaz gerekmez')}
       ${row(mode === 'none', 'data-act="audio-mode" data-v="none"', 'Ses yok', 'sesi başkası açıyorsa')}
     </div>
     ${spotify.authed() ? `<div class="mini-actions"><button class="link" data-act="dev-refresh">${icon('refresh')} Cihazları yenile</button></div>` : ''}
-    <p class="note">${hint}</p>`;
+    <p class="note">${hint}</p>
+    ${spotify.authed() && !spotify.canStream() ? `<p class="note">Bu sekmede ses düzeyini ayarlamak ve şarkıların hemen değişmesi için Spotify'a bir kez yeniden bağlanman gerekiyor${app.s ? ' (odadan çıkınca).' : `. <button class="link" data-act="connect">Yeniden bağlan</button>`}</p>` : ''}`;
 }
 
 function audioModal() {
@@ -1152,7 +1172,7 @@ function howModal() {
     <h3>Nasıl oynanır?</h3>
     <ol class="setup">
       <li>Biri oda kurar, linki ya da 6 harfli kodu paylaşır.</li>
-      <li>Herkes Spotify hesabıyla bağlanır; sık dinlenenler, oluşturduğu listeler ve kayıtlı albümlerdeki şarkılar oyuna girer.</li>
+      <li>Herkes Spotify hesabıyla bağlanır; sık dinlenenler, kendi listeleri, beğendiği şarkılar ve kayıtlı albümlerdeki şarkılar oyuna girer.</li>
       <li>Rastgele bir şarkı çalar. O şarkıyı dinlediğini düşündüğün herkesi seçip oy verirsin (kendin dahil).</li>
       <li>Her doğru isim +3, her yanlış isim −1 puan. Süre biterse seçtiklerin otomatik gönderilir.</li>
       <li>Herkes “Devam” deyince sıradaki şarkı başlar. Hedef puana ilk ulaşan kazanır.</li>

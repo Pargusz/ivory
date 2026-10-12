@@ -12,7 +12,7 @@ window.IVORY_CONFIG = {
   maxPlayers: 24,
 
   // Oyunu başlatmak için gereken en az oyuncu. (Yerelde, 127.0.0.1 üzerinde her zaman 1'dir.)
-  minPlayers: 2,
+  minPlayers: 1,
 
   // "Listeme ekle" düğmesinin şarkıları kaydettiği çalma listesinin adı.
   playlistName: 'Ivory',

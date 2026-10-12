@@ -22,7 +22,7 @@ Yerelde oyun **tek kişiyle** başlatılabilir, böylece tek başına deneyebili
 
 ## Spotify kurulumu (bir kez)
 
-1. <https://developer.spotify.com/dashboard> adresinde bir uygulama oluştur. Hesabın **Premium** olmalı. API olarak **Web API** seç.
+1. <https://developer.spotify.com/dashboard> adresinde bir uygulama oluştur. Hesabın **Premium** olmalı. API olarak **Web API** ve **Web Playback SDK** seç.
 2. **Redirect URIs** alanına sitenin adresini, sonundaki `/` ile birlikte ekle:
    - yerel deneme için: `http://127.0.0.1:5173/`
    - yayındaki site için: `https://KULLANICI.github.io/DEPO/`
@@ -63,9 +63,9 @@ Derleme adımı yoktur; dosyalar olduğu gibi yayınlanır.
 
 | Konu | Yaklaşım |
 | --- | --- |
-| Şarkı kaynakları | Sık dinlenenler (en çok + son çalınanlar), oyuncunun oluşturduğu çalma listeleri, kayıtlı albümler. Host hangilerinin kullanılacağını seçer. |
+| Şarkı kaynakları | Sık dinlenenler (en çok + son çalınanlar), oyuncunun oluşturduğu çalma listeleri ve Beğenilen Şarkılar, kayıtlı albümler (oyuncu başına en çok 6000 şarkı). Host hangilerinin kullanılacağını seçer. |
 | Aynı şarkının farklı sürümleri | Şarkılar yalnızca Spotify kimliğiyle değil, kayıt kodu (ISRC) ve temizlenmiş “başlık + sanatçı” anahtarıyla da eşleşir. Birinde single, diğerinde albüm sürümü varsa ikisi de dinleyen sayılır. Canlı, remix, akustik gibi farklı kayıtlar ayrı tutulur. |
-| Şarkının çalması | Oyuncu odaya girerken “Spotify nerede açık?” listesinden cihazını seçer; şarkılar o cihazda kendiliğinden çalar (Premium gerekir). Cihaz uykudaysa uyandırılır ve çalmanın başladığı doğrulanır; başlamazsa şarkı kendiliğinden oyun sekmesinde çalar. Cihazı olmayan “Bu sekmede çal”ı seçebilir (Premium yoksa 30 sn önizleme). |
+| Şarkının çalması | Oyuncu odaya girerken “Spotify nerede açık?” listesinden cihazını seçer; şarkılar o cihazda kendiliğinden çalar (Premium gerekir). Cihaz uykudaysa uyandırılır ve çalmanın başladığı doğrulanır; başlamazsa şarkı kendiliğinden oyun sekmesinde çalar. Cihazı olmayan “Bu sekmede çal”ı seçebilir: Premium hesapta sekme kendi Spotify oynatıcısını kurar (ses düzeyi kaydırıcısı var, şarkı hemen değişir); Premium yoksa Spotify'ın gömülü oynatıcısına düşer (30 sn önizleme, ses ayarı yok). |
 | Oda bağlantısı | Üç ayrı genel MQTT sunucusuna aynı anda bağlanılır; biri düşse oda sürer. Mesajlar oda kodundan türetilen anahtarla şifrelenir. |
 | Kopma / yenileme | Oyuncu da host da sayfayı yenileyince aynı odaya, aynı puanla döner. Host sekmesini kapatırsa oda kapanır. |
 | Gizlilik | Spotify token'ı yalnızca oyuncunun tarayıcısında durur. Şarkı kimlikleri oyun için host'un tarayıcısına gider; hiçbir sunucuda saklanmaz. |

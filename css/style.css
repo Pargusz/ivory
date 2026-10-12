@@ -1325,6 +1325,30 @@ a.btn {
   border: 0;
 }
 
+.vol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.vol label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(320px, 100%);
+  color: var(--mute);
+}
+
+.vol input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  accent-color: #5ee6a0;
+  cursor: pointer;
+}
+
 /* ---------- puan tablosu ---------- */
 
 .board ol {
