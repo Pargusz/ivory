@@ -572,8 +572,10 @@ function spotifyBody() {
   if (app.libErr) {
     const groups = spotify.groupCount();
     if (app.libErr.kind === 'unreg') {
-      return `<p class="note bad"><b>Bu Spotify hesabı izin listesinde değil.</b> Siteyi kuran kişinin seni Spotify panelinde “User Management” bölümüne eklemesi gerekiyor.</p>
+      // Spotify, geliştirme modundaki uygulamaya yalnızca elle eklenen hesapları kabul eder.
+      return `<p class="note bad"><b>Bu Spotify hesabı henüz oyuna eklenmemiş.</b> Odayı kuran kişiye Spotify hesabının e-posta adresini gönder; seni ekleyince aşağıdan tekrar dene.</p>
         <div class="mini-actions">
+          <button class="btn sm" data-act="reload">Eklendim, tekrar dene</button>
           ${groups > 1 ? `<button class="btn sm" data-act="next-group">Sıradaki grubu dene (${((spotify.group() + 1) % groups) + 1}/${groups})</button>` : ''}
           <button class="link" data-act="logout">Başka hesapla dene</button>
         </div>`;
