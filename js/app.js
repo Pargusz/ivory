@@ -26,6 +26,7 @@ const MIN_PLAYERS = LOCAL ? 1 : Math.max(1, CFG.minPlayers || 2);
 // Yalnızca yerelde, adrese ?demo eklenince açılan test kaynağı; oyuncular görmez.
 const DEMO = LOCAL && new URLSearchParams(location.search).has('demo');
 const JOIN_PATIENCE_MS = 10000;
+const MAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GONE = {
   kick: 'Host seni odadan çıkardı',
   full: 'Oda dolu',
@@ -62,6 +63,9 @@ const app = {
   devices: null,
   devBusy: false,
   devPicked: false, // oyuncu çalma yerini kendi seçti mi
+  mail: '', // izin isteyen oyuncunun yazdığı Spotify e-postası
+  mailSent: false,
+  asks: ss.get('asks', []), // host'a gelen giriş istekleri: [{ name, mail }]
   toasts: [],
   seenEv: null,
   joinAt: 0,
@@ -136,17 +140,60 @@ async function loadSpotify() {
       update();
     });
     app.spot = res;
+    ss.del('tried');
     refreshDevices(true);
   } catch (e) {
     app.spot = null;
     app.autoGo = false;
-    if (e.status === 403) app.libErr = { kind: 'unreg' };
-    else if (e.status === 401) app.libErr = { kind: 'auth' };
+    if (e.status === 403) {
+      if (tryNextGroup()) return; // sıradaki Spotify uygulamasına yönleniyor
+      app.libErr = { kind: 'unreg' };
+    } else if (e.status === 401) app.libErr = { kind: 'auth' };
     else app.libErr = { kind: 'other', text: e.message };
   }
   app.busy = null;
   update();
   if (app.autoGo && app.spot && app.view === 'prep') go();
+}
+
+// Birden fazla Spotify uygulaması (Client ID) varsa oyuncunun hangisine eklendiğini
+// kendimiz buluruz: biri kabul etmezse sıradakiyle bağlanmayı deneriz.
+function tryNextGroup() {
+  const tried = new Set(ss.get('tried', []));
+  tried.add(spotify.group());
+  const next = Array.from({ length: spotify.groupCount() }, (_, i) => i).find((i) => !tried.has(i));
+  if (next == null) {
+    ss.del('tried');
+    return false;
+  }
+  ss.set('tried', [...tried]);
+  spotify.logout();
+  spotify.login(next, { intent: app.intent, name: me.name });
+  return true;
+}
+
+// İzin isteyen oyuncunun e-postasını odadaki host'a iletir (odaya girmeden, yalnızca bu mesaj için bağlanır).
+function askHost(code, mail) {
+  const chan = new Channel({ code, id: me.id, host: false, brokers: CFG.brokers });
+  const msg = { t: 'ask', name: cleanName(me.name) || 'Oyuncu', mail };
+  let ticks = 0;
+  let sent = 0;
+  const stop = onTick(() => {
+    if (!chan.online || ticks++ % 4) return;
+    chan.send(msg);
+    if (++sent >= 4) done();
+  });
+  const done = () => {
+    stop();
+    setTimeout(() => chan.close(), 600);
+  };
+  setTimeout(done, 15000);
+  chan.open();
+}
+
+function saveAsks() {
+  ss.set('asks', app.asks);
+  update();
 }
 
 async function resolveMeta(id) {
@@ -228,6 +275,13 @@ function startHost(code, saved) {
     resolveMeta,
     onState: applyState,
     onConflict: () => endSession('Bu oda başka bir sekmede açıldı'),
+    onAsk: (ask) => {
+      if (!MAIL.test(ask.mail) || app.asks.some((a) => a.mail === ask.mail)) return;
+      app.asks.push(ask);
+      if (app.asks.length > 12) app.asks.shift();
+      toast(`${ask.name} giriş izni istiyor`);
+      saveAsks();
+    },
     maxPlayers: CFG.maxPlayers,
     minPlayers: MIN_PLAYERS,
     saved,
@@ -283,6 +337,8 @@ function endSession(message) {
   app.intent = null;
   ss.del('room');
   ss.del('host');
+  ss.del('asks');
+  app.asks = [];
   history.replaceState(null, '', location.pathname);
   releaseWake();
   if (message) toast(message);
@@ -403,23 +459,38 @@ const actions = {
     if (v === 'spotify' && spotify.authed() && !app.spot) loadSpotify();
     update();
   },
-  group: ({ v }) => {
-    ls.set('group', Number(v));
-    update();
-  },
   connect: () => {
     const name = cleanName(me.name);
     if (name) setName(name);
+    ss.del('tried');
     spotify.login(spotify.group(), { intent: app.intent, name: me.name });
   },
-  'next-group': () => {
-    const next = (spotify.group() + 1) % spotify.groupCount();
-    spotify.logout();
-    spotify.login(next, { intent: app.intent, name: me.name });
-  },
   reload: () => {
+    ss.del('tried');
     app.spot = null;
     loadSpotify();
+  },
+  'send-mail': async () => {
+    const mail = app.mail.trim();
+    if (!MAIL.test(mail)) return toast('Geçerli bir e-posta yaz');
+    await copyText(mail);
+    if (app.intent?.kind === 'join') {
+      askHost(app.intent.code, mail);
+      app.mailSent = true;
+      toast('E-postan odayı kuran kişiye iletildi', 'good');
+    } else {
+      toast('E-posta kopyalandı', 'good');
+    }
+    update();
+  },
+  'ask-copy': async ({ i }) => {
+    const ask = app.asks[Number(i)];
+    if (ask) toast((await copyText(ask.mail)) ? `${ask.mail} kopyalandı` : 'Kopyalanamadı', 'good');
+  },
+  'ask-del': ({ i }) => {
+    app.asks.splice(Number(i), 1);
+    if (!app.asks.length) app.modal = null;
+    saveAsks();
   },
   logout: () => {
     spotify.logout();
@@ -519,6 +590,11 @@ const models = {
     if (el.value !== app.code) el.value = app.code;
     update();
   },
+  mail: (value) => {
+    app.mail = value.slice(0, 120);
+    app.mailSent = false;
+    update();
+  },
   name: (value) => {
     me.name = value.slice(0, 14);
     ss.set('name', cleanName(me.name));
@@ -570,13 +646,31 @@ function spotifyBody() {
     return `<div class="loading"><span class="spinner"></span><div><b>${esc(app.busy.label)} okunuyor…</b><span>${app.busy.count} şarkı bulundu</span></div></div>`;
   }
   if (app.libErr) {
-    const groups = spotify.groupCount();
     if (app.libErr.kind === 'unreg') {
-      // Spotify, geliştirme modundaki uygulamaya yalnızca elle eklenen hesapları kabul eder.
-      return `<p class="note bad"><b>Bu Spotify hesabı henüz oyuna eklenmemiş.</b> Odayı kuran kişiye Spotify hesabının e-posta adresini gönder; seni ekleyince aşağıdan tekrar dene.</p>
+      // Spotify, geliştirme modundaki uygulamaya yalnızca elle eklenen hesapları kabul eder ve
+      // eklenmemiş hesabın e-postasını bize vermez; oyuncu onu bir kez kendisi yazar.
+      const join = app.intent?.kind === 'join';
+      const hint = app.mailSent
+        ? '<b class="up">İletildi.</b> Seni ekleyince aşağıdan tekrar dene.'
+        : join
+          ? 'E-postan yalnızca odayı kuran kişiye gider.'
+          : 'Kopyalayıp siteyi kuran kişiye gönder.';
+      return `<p class="note bad"><b>Bu Spotify hesabı henüz oyuna eklenmemiş.</b> Odayı kuran kişinin seni ekleyebilmesi için Spotify hesabının e-postası gerekiyor.</p>
+        <ol class="mailsteps">
+          <li>
+            <a class="btn sm" href="https://www.spotify.com/account/profile/" target="_blank" rel="noopener">Spotify e-postamı göster</a>
+            <span>Açılan sayfadaki e-postayı kopyala.</span>
+          </li>
+          <li>
+            <div class="mailrow">
+              <input data-model="mail" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="Spotify e-postan" value="${esc(app.mail)}" aria-label="Spotify e-postan">
+              <button class="btn sm primary" data-act="send-mail" ${MAIL.test(app.mail.trim()) ? '' : 'disabled'}>${join ? 'Gönder' : 'Kopyala'}</button>
+            </div>
+            <span>${hint}</span>
+          </li>
+        </ol>
         <div class="mini-actions">
           <button class="btn sm" data-act="reload">Eklendim, tekrar dene</button>
-          ${groups > 1 ? `<button class="btn sm" data-act="next-group">Sıradaki grubu dene (${((spotify.group() + 1) % groups) + 1}/${groups})</button>` : ''}
           <button class="link" data-act="logout">Başka hesapla dene</button>
         </div>`;
     }
@@ -592,13 +686,7 @@ function spotifyBody() {
         ${devicePicker()}
       </div>`;
   }
-  const groups = spotify.groupCount();
-  const pickGroup =
-    groups > 1
-      ? `<div class="seg" role="group" aria-label="Grup">${Array.from({ length: groups }, (_, i) => `<button class="${spotify.group() === i ? 'on' : ''}" data-act="group" data-v="${i}">Grup ${i + 1}</button>`).join('')}</div>
-         <p class="note">Hangi gruba eklendiğini bilmiyorsan 1 ile dene; uymazsa sıradakine geçebilirsin.</p>`
-      : '';
-  return `${pickGroup}
+  return `
     <button class="btn spotify" data-act="connect">Spotify ile bağlan</button>
     <p class="note">Sık dinlediklerin, oluşturduğun listeler ve kayıtlı albümlerin okunur. Şarkı listen yalnızca bu oyun için odadaki host'a gider; hiçbir sunucuda saklanmaz.</p>`;
 }
@@ -648,6 +736,7 @@ function barView() {
   <header class="bar" data-key="bar">
     <div class="brand">${MARK}<span>ivory</span></div>
     <div class="bar-right">
+      ${isHost() && app.asks.length ? `<button class="pill warn" data-act="modal" data-m="asks" title="Giriş isteyenler">${app.asks.length} istek</button>` : ''}
       <button class="pill" data-act="copy-link" title="Davet linkini kopyala"><span class="mono">${esc(app.s.code)}</span>${icon('link')}</button>
       <button class="icon-btn ${quiet ? 'dim' : ''}" data-act="modal" data-m="audio" aria-label="Ses ayarı">${icon(quiet ? 'mute' : 'sound')}</button>
       <button class="icon-btn" data-act="modal" data-m="leave" aria-label="Odadan ayrıl">${icon('exit')}</button>
@@ -772,7 +861,7 @@ function boardView(st, P) {
           const votes = reveal
             ? `<span class="votes">${
                 ballot
-                  ? ballot.map((id) => (P.get(id) ? av(P.get(id), ls.has(id) ? 'ok' : 'no') : '')).join('') || '<em>boş oy</em>'
+                  ? ballot.map((id) => (P.get(id) ? `<span class="av ${ls.has(id) ? 'ok' : 'no'}" title="${esc(P.get(id).name)} · ${ls.has(id) ? 'dinliyor' : 'dinlemiyor'}">${esc(initial(P.get(id).name))}</span>` : '')).join('') || '<em>boş oy</em>'
                   : '<em>oy yok</em>'
               }</span>`
             : '';
@@ -829,11 +918,12 @@ function wheelView(st, { reveal, locked, mine, listeners }) {
       const is = listeners.has(p.id);
       const cls = ['slice'];
       if (!p.on) cls.push('off');
-      let badge = '';
+      let badge = ''; // oylama sırasında: seçtim (✓) ya da bu oyuncu oyunu verdi (•)
+      let score = ''; // açıklamada: bu tahminden aldığım puan
       if (reveal) {
         if (is) cls.push('listener');
         if (sel) cls.push(is ? 'hit' : 'miss');
-        badge = sel ? (is ? '+3' : '−1') : is ? '♪' : '';
+        score = sel ? (is ? '+3' : '−1') : '';
       } else {
         if (sel) cls.push('sel');
         badge = sel ? '✓' : st.rd.voted.includes(p.id) ? '•' : '';
@@ -846,7 +936,9 @@ function wheelView(st, { reveal, locked, mine, listeners }) {
         const [cx, cy] = n === 1 ? [0, -67] : polar(67, mid);
         const fs = [...p.name].length > 9 ? 7 : 8.6;
         const room = n <= 2 ? 14 : Math.floor((2 * 67 * Math.sin((step * Math.PI) / 360) * 0.82) / (fs * 0.58));
-        label = `<text x="${n2(cx)}" y="${n2(cy)}" font-size="${fs}">${esc(clip(p.name, room))}</text>`;
+        // Puan, adın hemen altına yazılır.
+        label = `<text x="${n2(cx)}" y="${n2(cy - (score ? fs * 0.6 : 0))}" font-size="${fs}">${esc(clip(p.name, room))}</text>`;
+        if (score) label += `<text class="pts" x="${n2(cx)}" y="${n2(cy + fs * 0.85)}" font-size="${n2(fs * 1.3)}">${score}</text>`;
         [bx, by] = [cx, cy + fs + 4.5];
       } else {
         const fs = n <= 10 ? 7.2 : n <= 16 ? 6.4 : 5.8;
@@ -855,6 +947,8 @@ function wheelView(st, { reveal, locked, mine, listeners }) {
         const rot = turn > 90 && turn < 270 ? mid + 180 : mid;
         label = `<text transform="translate(${n2(cx)} ${n2(cy)}) rotate(${n2(rot)})" font-size="${fs}">${esc(clip(p.name, Math.floor(44 / (fs * 0.58))))}</text>`;
         [bx, by] = polar(90.5, mid);
+        // Kalabalık çarkta ad dilim boyunca döner; puan dilimin dış ucunda durur.
+        if (score) badge = score;
       }
 
       const rim = R_OUT + 2.6;
@@ -863,12 +957,12 @@ function wheelView(st, { reveal, locked, mine, listeners }) {
       const meArc = p.id === me.id ? `<path class="me-arc" d="M${n2(m0x)} ${n2(m0y)}A${rim} ${rim} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${n2(m1x)} ${n2(m1y)}"/>` : '';
       const dot = badge === '•';
       const mark = badge
-        ? `<g class="pin ${dot ? 'dot' : ''}" data-key="pin${badge}" transform="translate(${n2(bx)} ${n2(by)})"><circle r="${dot ? 2.4 : 5.4}"/>${dot ? '' : `<text font-size="${badge.length > 1 ? 4.8 : 6}">${badge}</text>`}</g>`
+        ? `<g class="pin ${dot ? 'dot' : ''}" data-key="pin${badge}" transform="translate(${n2(bx)} ${n2(by)})"><circle r="${dot ? 2.4 : badge.length > 1 ? 6.2 : 5.4}"/>${dot ? '' : `<text font-size="${badge.length > 1 ? 5.6 : 6}">${badge}</text>`}</g>`
         : '';
       return `<g class="${cls.join(' ')}" data-key="s-${p.id}" style="--h:${p.hue};--dx:${n2(ux * 4)}px;--dy:${n2(uy * 4)}px" data-act="pick" data-id="${p.id}" role="button" tabindex="${locked ? -1 : 0}" aria-pressed="${sel}" aria-label="${esc(p.name)}${p.id === me.id ? ' (sen)' : ''}"><path class="bg" d="${slicePath(a0, a1)}"/>${meArc}${label}${mark}</g>`;
     })
     .join('');
-  return `<svg class="wheel ${reveal ? 'is-reveal' : ''} ${locked ? 'locked' : ''}" viewBox="-106 -106 212 212" role="group" aria-label="Oyuncular">${slices}</svg>`;
+  return `<svg class="wheel ${reveal ? 'is-reveal' : ''} ${locked ? 'locked' : ''}" viewBox="-110 -110 220 220" role="group" aria-label="Oyuncular">${slices}</svg>`;
 }
 
 function playView(st) {
@@ -935,6 +1029,7 @@ function playView(st) {
           <div class="cover">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : '<span>♪</span>'}</div>
         </div>
       </div>
+      <div class="legend ${reveal ? '' : 'hidden'}"><span><i class="g"></i>dinliyor</span><span><i class="r"></i>yanlış tahminin</span></div>
       <div class="embed-wrap ${embedOn ? '' : 'hidden'}">
         <div id="embed" data-key="embed" data-keep></div>
         ${embedOn && playback.status === 'blocked' && playback.mode !== 'none' ? '<p class="note">Ses gelmiyorsa oynatıcıdaki ▶ düğmesine bir kez dokun.</p>' : ''}
@@ -1015,6 +1110,28 @@ function audioModal() {
     <button class="btn primary" data-act="close">Tamam</button>`;
 }
 
+// Host'a gelen giriş istekleri: oyuncunun yazdığı Spotify e-postası, panele eklenmek üzere.
+function asksModal() {
+  const rows = app.asks
+    .map(
+      (a, i) => `
+      <li data-key="ask-${esc(a.mail)}">
+        <div><b>${esc(a.name)}</b><span>${esc(a.mail)}</span></div>
+        <button class="btn sm" data-act="ask-copy" data-i="${i}">${icon('copy')} Kopyala</button>
+        <button class="icon-btn sm" data-act="ask-del" data-i="${i}" aria-label="İsteği sil">${icon('x')}</button>
+      </li>`
+    )
+    .join('');
+  return `
+    <h3>Giriş isteyenler</h3>
+    <p class="note">Bu e-postaları Spotify panelinde uygulamanın “User Management” bölümüne ekle. Ekleyince oyuncu kendi ekranında “Eklendim, tekrar dene”ye bassın.</p>
+    <ul class="asks">${rows || '<li><span>Bekleyen istek yok.</span></li>'}</ul>
+    <div class="row">
+      <a class="btn" href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">Spotify panelini aç</a>
+      <button class="btn primary" data-act="close">Tamam</button>
+    </div>`;
+}
+
 function setupModal() {
   return `
     <h3>Kurulum (yalnızca siteyi yayınlayan kişi)</h3>
@@ -1051,6 +1168,7 @@ function modalView() {
   if (m.name === 'audio') body = audioModal();
   else if (m.name === 'setup') body = setupModal();
   else if (m.name === 'how') body = howModal();
+  else if (m.name === 'asks') body = asksModal();
   else if (m.name === 'leave') {
     body = `<h3>${isHost() ? 'Odayı kapat?' : 'Odadan ayrıl?'}</h3>
       <p class="note">${isHost() ? 'Host sensin: ayrılırsan oda herkes için kapanır.' : 'Aynı isimle tekrar girersen puanın korunur.'}</p>

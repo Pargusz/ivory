@@ -38,13 +38,17 @@ Bu kurulumu yalnızca siteyi yayınlayan kişi yapar. **Oyunculardan hiçbir kod
 
 ### Oyuncu sayısı sınırı
 
-Odaya girmenin tek yolu Spotify hesabıyla bağlanmaktır. Spotify, geliştirme modundaki bir uygulamaya **en fazla 5 hesap** eklenmesine izin veriyor. Daha fazla kişiyle oynamak için ikinci, üçüncü… uygulamayı açıp Client ID'lerini `config.js`'e ekle:
+Odaya girmenin tek yolu Spotify hesabıyla bağlanmaktır. Spotify, geliştirme modundaki bir uygulamaya **en fazla 5 hesap** eklenmesine izin veriyor ve her hesabın elle eklenmesini istiyor. Daha fazla kişiyle oynamak için ikinci, üçüncü… uygulamayı açıp Client ID'lerini `config.js`'e ekle:
 
 ```js
 spotifyClientIds: ['id-1', 'id-2'],
 ```
 
-Her uygulama 5 hesap daha demektir; oyuncular girişte kendi **grubunu** seçer. Bir odaya en fazla `maxPlayers` (varsayılan 24) kişi girebilir.
+Her uygulama 5 hesap daha demektir. Oyuncunun hangi uygulamaya eklendiğini site kendisi bulur: biri kabul etmezse sıradakini dener. Her uygulamada **Redirect URIs** aynı şekilde tanımlı olmalı. Bir odaya en fazla `maxPlayers` (varsayılan 24) kişi girebilir.
+
+### Arkadaş ekleme
+
+Listede olmayan biri bağlanmayı denediğinde site ona Spotify e-postasını sorar (Spotify bu bilgiyi siteye vermez). Oyuncu e-postasını yazıp **Gönder**'e basınca, odayı kuran kişinin ekranında üstte **“istek”** rozeti çıkar; oradan e-postayı kopyalayıp Spotify panelinde **User Management**'a ekle. Oyuncu sonra **“Eklendim, tekrar dene”**ye basar.
 
 ## GitHub Pages'te yayınlama
 

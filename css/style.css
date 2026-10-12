@@ -195,6 +195,11 @@ em {
   opacity: 0.42;
 }
 
+a.btn {
+  color: inherit;
+  text-decoration: none;
+}
+
 .btn.primary {
   background: var(--ivory);
   color: #0a0a10;
@@ -1158,50 +1163,83 @@ em {
   pointer-events: none;
 }
 
-.wheel.is-reveal .slice {
-  opacity: 0.4;
+/* Açıklama: dinleyen yeşil ve dışarıda, yanlış tahmin kırmızı, diğerleri nötr. */
+
+.wheel.is-reveal .slice .bg {
+  fill: #24232d;
+}
+
+.wheel.is-reveal .slice > text {
+  fill: #8f8da3;
 }
 
 .wheel.is-reveal .slice.listener {
-  opacity: 1;
-  transform: translate(var(--dx), var(--dy));
+  transform: translate(calc(var(--dx) * 2.1), calc(var(--dy) * 2.1));
 }
 
 .wheel.is-reveal .slice.listener .bg {
-  fill: var(--c);
+  fill: var(--good);
 }
 
 .wheel.is-reveal .slice.listener > text {
-  fill: #0a0a10;
+  fill: #062414;
+}
+
+.wheel.is-reveal .slice.miss .bg {
+  fill: var(--bad);
+}
+
+.wheel.is-reveal .slice.miss > text {
+  fill: #2a0509;
+}
+
+.slice > text.pts {
+  font-family: var(--display);
+  font-weight: 700;
 }
 
 .wheel.is-reveal .slice.hit .pin text {
   fill: var(--good);
 }
 
-.wheel.is-reveal .slice.miss {
-  opacity: 1;
-}
-
-.wheel.is-reveal .slice.miss .bg {
-  fill: oklch(0.32 0.07 20);
-  stroke: var(--bad);
-  stroke-width: 1.8;
-}
-
-.wheel.is-reveal .slice.miss .pin circle {
+.wheel.is-reveal .slice.miss .pin text {
   fill: var(--bad);
 }
 
-.wheel.is-reveal .slice.miss .pin text {
-  fill: #1a0408;
+.legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--mute);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+}
+
+.legend .g {
+  background: var(--good);
+}
+
+.legend .r {
+  background: var(--bad);
 }
 
 .disc {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 31.5%;
+  width: 30.5%;
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
   pointer-events: none;
@@ -1352,13 +1390,15 @@ em {
   font-size: 9px;
 }
 
+/* Oy verilen kişi şarkıyı dinliyorsa yeşil, dinlemiyorsa kırmızı. */
 .votes .av.ok {
-  box-shadow: 0 0 0 2px var(--good);
+  background: var(--good);
+  color: #062414;
 }
 
 .votes .av.no {
-  box-shadow: 0 0 0 2px var(--bad);
-  opacity: 0.6;
+  background: var(--bad);
+  color: #2a0509;
 }
 
 .votes em {
@@ -1553,6 +1593,80 @@ em {
 }
 
 .uri span {
+  overflow-wrap: anywhere;
+}
+
+.mailsteps {
+  display: grid;
+  gap: 14px;
+  padding-left: 20px;
+  list-style: decimal;
+  font-size: 13px;
+  color: var(--mute);
+}
+
+.mailsteps li > span {
+  display: block;
+  margin-top: 6px;
+}
+
+.mailrow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.mailrow input {
+  min-width: 0;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mailrow input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+.pill.warn {
+  background: #ffd84d;
+  border-color: transparent;
+  color: #1b1400;
+}
+
+.asks {
+  display: grid;
+  gap: 8px;
+}
+
+.asks li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.asks li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.asks b {
+  display: block;
+}
+
+.asks span {
+  display: block;
+  font-size: 13px;
+  color: var(--mute);
   overflow-wrap: anywhere;
 }
 

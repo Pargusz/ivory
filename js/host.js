@@ -35,13 +35,14 @@ function buildLib(chunks) {
 }
 
 export class HostGame {
-  constructor({ code, me, chunks, rev, send, resolveMeta, onState, onConflict, maxPlayers, minPlayers, saved }) {
+  constructor({ code, me, chunks, rev, send, resolveMeta, onState, onConflict, onAsk, maxPlayers, minPlayers, saved }) {
     this.code = code;
     this.meId = me.id;
     this.send = send;
     this.resolveMeta = resolveMeta;
     this.onState = onState;
     this.onConflict = onConflict;
+    this.onAsk = onAsk;
     this.max = maxPlayers || 24;
     this.min = minPlayers || 2;
     this.inst = uid(6);
@@ -89,6 +90,11 @@ export class HostGame {
       return;
     }
     if (m.t === 'hi') return this.#hi(m);
+    if (m.t === 'ask') {
+      // Henüz odada olmayan biri Spotify e-postasını host'a iletiyor.
+      this.onAsk?.({ name: cleanName(m.name) || 'Oyuncu', mail: String(m.mail || '').trim().slice(0, 120) });
+      return;
+    }
     const p = this.players.get(m.f);
     if (!p) return;
     if (m.f !== this.meId) this.#seen(p);

@@ -5,8 +5,8 @@ window.IVORY_CONFIG = {
   // Geliştirme modunda her uygulama en fazla 5 Spotify hesabına izin verir. Daha fazla
   // kişiyle oynamak için ikinci, üçüncü… uygulamayı açıp Client ID'lerini buraya ekle:
   //   spotifyClientIds: ['birinci-id', 'ikinci-id'],
-  // Oyuncular giriş ekranında kendi eklendikleri grubu (1, 2, …) seçer.
-  spotifyClientIds: ['e713b2b651dd48b99cdce3a9d36b9ac9'],
+  // Oyuncunun hangi uygulamaya eklendiğini site kendisi bulur: biri kabul etmezse sıradakini dener.
+  spotifyClientIds: ['e713b2b651dd48b99cdce3a9d36b9ac9', '23c6c9d727214964887b20a3a4f909e8'],
 
   // Bir odaya girebilecek en fazla oyuncu.
   maxPlayers: 24,
