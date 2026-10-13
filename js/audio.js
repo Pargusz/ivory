@@ -94,6 +94,7 @@ export class Playback {
     this.localId = null;
     this.localOff = false; // sekme içi oynatıcı bu hesapta/tarayıcıda kurulamadı
     this.localWhy = ''; // kurulamadıysa nedeni (ekranda gösterilir)
+    this.localFails = 0; // art arda geçici hata sayısı; üçte vazgeçilir
     this.connecting = null;
     this.volTimer = 0;
   }
@@ -159,9 +160,9 @@ export class Playback {
     for (let i = 0; i < 4; i++) {
       await sleep(250);
       if (tk !== this.token || this.status !== 'ended') return;
-      const st = await this.local.getCurrentState().catch(() => null);
+      const st = await this.local?.getCurrentState().catch(() => null);
       if (tk !== this.token || !st || st.paused) return;
-      this.local.pause().catch(() => {});
+      this.local?.pause().catch(() => {});
       if (i) spotify.pause(this.localId).catch(() => {});
     }
   }
@@ -174,7 +175,7 @@ export class Playback {
     let zero = 0; // kesitin başladığı an (duvar saati)
     while (tk === this.token && this.status !== 'ended') {
       await sleep(100);
-      const st = await this.local.getCurrentState().catch(() => null);
+      const st = await this.local?.getCurrentState().catch(() => null);
       if (tk !== this.token) return;
       const now = Date.now();
       const cur = st?.track_window?.current_track;
@@ -201,6 +202,7 @@ export class Playback {
     ls.set('audio', mode);
     this.localOff = false;
     this.localWhy = '';
+    this.localFails = 0;
     if (device !== undefined) {
       this.device = device;
       this.warm = false;
@@ -306,7 +308,7 @@ export class Playback {
     for (let attempt = 0; attempt < tries; attempt++) {
       try {
         if (!this.warm) {
-          const list = (await spotify.devices()).filter((d) => d.id !== this.localId);
+          const list = (await spotify.devices()).filter((d) => d.id !== this.localId && d.name !== 'Ivory');
           const dev = list.find((d) => d.id === this.device) || list.find((d) => d.is_active) || (list.length === 1 ? list[0] : null);
           if (!dev) return false;
           if (dev.id !== this.device) {
@@ -351,17 +353,23 @@ export class Playback {
         getOAuthToken: (cb) => spotify.accessToken().then(cb, () => cb('')),
       });
       const id = await new Promise((resolve) => {
-        const fail = (why) => {
+        // fatal: yeniden denemenin anlamı yok (Premium yok, izin yok, tarayıcı desteklemiyor).
+        let settled = false;
+        const fail = (why, fatal) => {
+          if (settled) return;
+          settled = true;
           this.localWhy ||= why;
+          if (fatal) this.localOff = true;
           resolve(null);
         };
         player.addListener('ready', ({ device_id }) => {
+          settled = true;
           this.localId = device_id;
           resolve(device_id);
         });
-        player.addListener('initialization_error', (e) => fail('tarayıcı desteklemiyor (' + e.message + ')'));
-        player.addListener('authentication_error', (e) => fail('Spotify izni reddedildi (' + e.message + ')'));
-        player.addListener('account_error', () => fail('Spotify Premium gerekli'));
+        player.addListener('initialization_error', (e) => fail('tarayıcı desteklemiyor (' + e.message + ')', true));
+        player.addListener('authentication_error', (e) => fail('Spotify izni reddedildi (' + e.message + ')', true));
+        player.addListener('account_error', () => fail('Spotify Premium gerekli', true));
         setTimeout(() => fail('oynatıcı zamanında hazır olmadı'), 8000);
         player.connect().then((ok) => ok || fail('bağlanamadı'), () => fail('bağlanamadı'));
       });
@@ -382,9 +390,10 @@ export class Playback {
         return null;
       })
       .then((id) => {
+        // Geçici bir aksaklık (ağ, zaman aşımı) oynatıcıyı oyunun sonuna kadar kapatmasın.
         if (!id) {
-          this.localOff = true;
           this.connecting = null;
+          if (++this.localFails >= 3) this.localOff = true;
         }
         return id;
       });
@@ -401,7 +410,9 @@ export class Playback {
       try {
         await spotify.play(this.localId, uri, track.pos);
         // Şarkı açılırken tur bittiyse çalmaya devam etmesin.
-        if (tk !== this.token && !this.cur) this.local.pause().catch(() => {});
+        if (tk !== this.token && !this.cur) this.local?.pause().catch(() => {});
+        this.localFails = 0;
+        this.localWhy = '';
         return true;
       } catch (e) {
         why = (e.reason === 'PREMIUM_REQUIRED' ? 'Spotify Premium gerekli' : e.message) + ' (' + e.status + ')';
@@ -410,7 +421,13 @@ export class Playback {
       await sleep(350);
     }
     this.localWhy = why;
-    this.localOff = true;
+    if (/\((401|403)\)$/.test(why) || ++this.localFails >= 3) this.localOff = true;
+    else {
+      // Oynatıcı Spotify'dan düşmüş olabilir: bağlantıyı bırak, sıradaki şarkıda yeniden kurulsun.
+      this.local?.disconnect();
+      this.local = null;
+      this.connecting = null;
+    }
     return false;
   }
 

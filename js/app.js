@@ -546,7 +546,8 @@ async function refreshDevices(auto = false) {
   update();
   try {
     // Bu sekmenin kendi oynatıcısı da Spotify'da cihaz olarak görünür; listede gösterme.
-    app.devices = (await spotify.devices()).filter((d) => d.id !== playback.localId);
+    // Başka bir sekmeden ya da önceki açılıştan kalan "Ivory" oynatıcıları da ayıklanır.
+    app.devices = (await spotify.devices()).filter((d) => d.id !== playback.localId && d.name !== 'Ivory');
   } catch {
     app.devices = [];
   }

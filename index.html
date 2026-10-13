@@ -21,6 +21,19 @@
     <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
     <div id="app"></div>
     <noscript><p style="padding: 24px; color: #fff">Bu oyun için JavaScript gerekli.</p></noscript>
+    <script>
+      // Yeni sürüm yayınlandıktan hemen sonra tarayıcı bazı dosyaları eski hâliyle tutabilir; o zaman
+      // dosyalar birbirini tutmaz ve sayfa boş kalır. Bu olursa dosyaları tazeleyip bir kez yeniler.
+      window.addEventListener('error', async (e) => {
+        if (!/requested module|export named|Importing binding/i.test(e.message || '')) return;
+        const last = Number(sessionStorage.getItem('ivory.healed')) || 0;
+        if (Date.now() - last < 60000) return;
+        sessionStorage.setItem('ivory.healed', String(Date.now()));
+        const files = ['app', 'audio', 'client', 'demo', 'host', 'lib', 'lyrics', 'mqtt', 'net', 'spotify', 'util'].map((f) => 'js/' + f + '.js');
+        await Promise.all([...files, 'config.js', 'css/style.css'].map((f) => fetch(f, { cache: 'reload' }).catch(() => {})));
+        location.reload();
+      });
+    </script>
     <script src="config.js"></script>
     <script type="module" src="js/app.js"></script>
   </body>
