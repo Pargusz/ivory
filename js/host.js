@@ -509,7 +509,8 @@ export class HostGame {
     this.used.add(e.id);
     for (const k of e.keys) this.used.add(k);
     const next = (this.next = { id: e.id, keys: e.keys, dur: e.dur, meta: null, at: Date.now(), settled: false });
-    Promise.resolve(this.resolveMeta(e.id))
+    // Şarkının adı kütüphaneyle birlikte geldiyse ipucu olarak verilir (Spotify'a sormamak için).
+    Promise.resolve(this.resolveMeta(e.id, e.name ? { name: e.name, artists: e.artists, dur: e.dur } : null))
       .finally(() => {
         next.settled = true;
       })

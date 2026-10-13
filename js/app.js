@@ -208,12 +208,12 @@ function saveAsks() {
 
 // Host için: şarkının başlık bilgisi. "Şarkıyı bil" modunda kesitin başlayacağı yer de (at)
 // eklenir: başı sessiz şarkılar sözlerin başladığı yerden çalar.
-async function resolveMeta(id) {
-  let m = await trackMeta(id);
+async function resolveMeta(id, hint) {
+  let m = await trackMeta(id, hint);
   const mode = app.st?.set.mode;
   // Kapak bulmacasında albümün adı da doğru cevap sayılır; kendi kütüphanemdeki şarkılarda
   // albüm adı tutulmadığı için Spotify'dan tamamlanır.
-  if (m && !m.skip && mode === 'cover' && !m.album && !isDemo(id) && spotify.authed()) {
+  if (m && !m.skip && mode === 'cover' && !m.album && !isDemo(id) && spotify.authed() && !spotify.blockedFor()) {
     const full = await spotify.track(id).catch(() => null);
     if (full) m = { ...m, album: full.album, img: m.img || full.img };
   }
@@ -222,11 +222,18 @@ async function resolveMeta(id) {
   return { ...m, at: startAt(lines, m.dur) };
 }
 
-async function trackMeta(id) {
+// Şarkı bilgisi mümkün olduğunca Spotify'ın istek kotasını harcamadan bulunur: kendi
+// kütüphanem, şarkıyı getiren oyuncunun gönderdiği ad/sanatçı (hint) ve kapak için Spotify'ın
+// kota saymayan açık adresi. Spotify'a ancak bunlar yoksa sorulur.
+async function trackMeta(id, hint) {
   if (isDemo(id)) return demoMeta(id);
   if (meta.has(id)) return meta.get(id);
   let m = null;
-  if (spotify.authed()) m = await spotify.track(id).catch(() => null);
+  if (hint?.name) {
+    const open = await spotify.publicMeta(id).catch(() => null);
+    m = { name: hint.name, artists: hint.artists || '', img: open?.img || '', dur: hint.dur || 0 };
+  }
+  if (!m && spotify.authed() && !spotify.blockedFor()) m = await spotify.track(id).catch(() => null);
   m ||= await spotify.publicMeta(id).catch(() => null);
   // skip: host bu şarkıyla tur açmaz (çalınamıyor ya da oyuna girmiyor).
   return m && (m.gone || skipSong(m.name, m.artists)) ? { ...m, skip: true } : m;
@@ -534,7 +541,8 @@ function isRight(text, st) {
     return [...String(m.artists || '').split(','), m.album, m.name].some((c) => c && c.trim() && titleMatch(text, c.trim(), ''));
   }
   const picked = app.g.pick?.name === text ? app.g.pick : null;
-  return titleMatch(text, st.rd.meta?.name, st.rd.meta?.artists) && (!picked || artistMatch(picked.artists, st.rd.meta?.artists));
+  // Sanatçı bilgisi yoksa (şarkı bilgisi yalnızca açık adresten geldiyse) ad yeterlidir.
+  return titleMatch(text, m.name, m.artists) && (!picked || !m.artists || artistMatch(picked.artists, m.artists));
 }
 
 let shotCtx = null;
@@ -997,7 +1005,8 @@ function spotifyBody() {
   }
   if (app.spot) {
     const warn = app.spot.warn?.length ? `<p class="note">Okunamayan kaynak: ${esc(app.spot.warn.join(', '))}</p>` : '';
-    return `<div class="ready">${icon('check')}<div><b>${app.spot.tracks.length} şarkı hazır</b><span>${esc(app.spot.user?.name || '')} · ${sourceCount(app.spot.tracks)}</span></div></div>${warn}
+    const limited = app.spot.limited ? `<p class="note">Spotify şu an yeni istek kabul etmiyor; kayıtlı şarkı listenle oynayabilirsin. Şarkılar sayfadaki oynatıcıdan çalar.</p>` : '';
+    return `<div class="ready">${icon('check')}<div><b>${app.spot.tracks.length} şarkı hazır</b><span>${esc(app.spot.user?.name || '')} · ${sourceCount(app.spot.tracks)}</span></div></div>${warn}${limited}
       <div class="mini-actions"><button class="link" data-act="reload">Şarkıları yenile</button><button class="link" data-act="logout">Hesabı değiştir</button></div>
       <div class="where">
         <h4>Spotify nerede açık?</h4>

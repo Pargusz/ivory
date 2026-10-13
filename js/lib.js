@@ -20,12 +20,23 @@ export function makeTrack({ id, name = '', artists = '', img = '', dur = 0, isrc
   return { id, name, artists, img, dur, f: 0, key: songKey(name, artists), ik: isrcKey(isrc) };
 }
 
-// Bir parça: id.bayrak.süre.başlıkAnahtarı.isrcAnahtarı
+// Şarkının adı ve sanatçısı da gönderilir: host, başkasının şarkısının bilgisini Spotify'a
+// sormadan (istek kotası harcamadan) gösterebilsin. Ayraçlarla karışmasın diye kodlanır.
+const pack = (s) => encodeURIComponent(String(s || '').slice(0, 80)).replace(/\./g, '%2E');
+const unpack = (s) => {
+  try {
+    return decodeURIComponent(s || '');
+  } catch {
+    return '';
+  }
+};
+
+// Bir parça: id.bayrak.süre.başlıkAnahtarı.isrcAnahtarı.ad.sanatçılar
 export function encodeLib(tracks) {
   const chunks = [];
   let cur = [];
   for (const t of tracks) {
-    cur.push([t.id, t.f.toString(32), Math.round((t.dur || 0) / 1000).toString(36), t.key || '', t.ik || ''].join('.'));
+    cur.push([t.id, t.f.toString(32), Math.round((t.dur || 0) / 1000).toString(36), t.key || '', t.ik || '', pack(t.name), pack(t.artists)].join('.'));
     if (cur.length === CHUNK) {
       chunks.push(cur.join(','));
       cur = [];
@@ -38,12 +49,12 @@ export function encodeLib(tracks) {
 export function decodeChunk(text) {
   const out = [];
   for (const part of String(text || '').split(',')) {
-    const [id, f, dur, key, ik] = part.split('.');
+    const [id, f, dur, key, ik, name, artists] = part.split('.');
     if (!id) continue;
     const keys = [];
     if (key) keys.push('t:' + key);
     if (ik) keys.push('i:' + ik);
-    out.push({ id, f: parseInt(f, 32) || 0, dur: (parseInt(dur, 36) || 0) * 1000, keys });
+    out.push({ id, f: parseInt(f, 32) || 0, dur: (parseInt(dur, 36) || 0) * 1000, keys, name: unpack(name), artists: unpack(artists) });
   }
   return out;
 }

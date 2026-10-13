@@ -295,7 +295,10 @@ export class Playback {
       if (track.limit) this.#endAfter(tk, track.limit);
       return;
     }
-    if (track.secret) {
+    // Spotify istekleri reddediyorsa (kota) cihazda ya da sekme içi oynatıcıda çalmak mümkün
+    // değil; ikisi de istek gerektirir. Gömülü oynatıcı istek harcamaz: doğrudan ona geçilir.
+    const limited = spotify.blockedFor() > 0;
+    if (track.secret || limited) {
       if (this.via === 'local' && this.local) {
         this.local.pause().catch(() => {});
         this.#ensureQuiet(tk);
@@ -317,7 +320,7 @@ export class Playback {
       }
       this.notify('Spotify cihazında açılamadı — şarkı bu sekmede çalıyor');
     }
-    const ok = !track.secret && (await this.#onLocal(track, tk));
+    const ok = !track.secret && !limited && (await this.#onLocal(track, tk));
     if (tk !== this.token) return;
     if (ok) {
       this.#pauseEmbed();

@@ -65,7 +65,6 @@ export function logout() {
   auth = null;
   ownPlaylists = null;
   ls.del('auth');
-  ls.del('libcache');
 }
 
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -299,19 +298,43 @@ async function playlistItems(id, each) {
 
 // Sitenin üç kaynağını okur: sık dinlenenler, oluşturduğu listeler, kayıtlı albümler.
 // Bir kaynak hata verirse diğerleri yine yüklenir; hata `warn` içinde döner.
-// Okunan kütüphane tarayıcıda bir gün saklanır: siteye her girişte yüzlerce istek atılmaz.
-// "Şarkıları yenile" (force) Spotify'dan yeniden okur.
-const CACHE_MS = 24 * 3600 * 1000;
-const CACHE_V = 3;
+// Okunan kütüphane tarayıcıda 30 gün saklanır: Spotify'a yalnızca ilk girişte ve "Şarkıları
+// yenile" (force) denince sorulur. Spotify istekleri reddediyorsa (kota) saklanan liste, süresi
+// geçmiş olsa da kullanılır: oyun Spotify'ın kotasına takılmadan sürer.
+const CACHE_MS = 30 * 24 * 3600 * 1000;
+const CACHE_V = 4;
+
+function keptLibrary() {
+  const kept = ls.get('libcache');
+  return kept?.v === CACHE_V && kept.uid && kept.tracks?.length ? kept : null;
+}
+
+// limited: Spotify'a ulaşılamadığı için saklanan liste kullanıldı.
+function fromKept(kept, limited) {
+  if (!auth.user || limited) {
+    auth.user = kept.user || { id: kept.uid, name: '' };
+    ls.set('auth', auth);
+  }
+  return { user: auth.user, tracks: kept.tracks, warn: [], kept: kept.at, limited };
+}
 
 export async function loadLibrary(progress = () => {}, force = false) {
-  const kept = ls.get('libcache');
-  if (!force && kept?.v === CACHE_V && kept.idx === auth?.idx && kept.uid && kept.uid === auth?.user?.id && Date.now() - kept.at < CACHE_MS && kept.tracks?.length) {
-    return { user: auth.user, tracks: kept.tracks, warn: [], kept: kept.at };
+  const kept = keptLibrary();
+  if (!force && kept && kept.uid === auth?.user?.id && Date.now() - kept.at < CACHE_MS) return fromKept(kept, false);
+  try {
+    return await readLibrary(progress, kept, force);
+  } catch (e) {
+    if (e.status === 429 && kept) return fromKept(kept, true);
+    throw e;
   }
+}
+
+async function readLibrary(progress, kept, force) {
   const me = await api('/me');
   auth.user = { id: me.id, name: me.display_name || me.id };
   ls.set('auth', auth);
+  // Yeniden giriş yapıldıysa kim olduğu ancak şimdi belli olur; kayıtlı liste onunsa yeniden okuma.
+  if (!force && kept && kept.uid === me.id && Date.now() - kept.at < CACHE_MS) return fromKept(kept, false);
 
   const map = new Map();
   const warn = [];
@@ -391,8 +414,9 @@ export async function loadLibrary(progress = () => {}, force = false) {
     const rest = shuffle(tracks.filter((t) => !(t.f & FL)));
     tracks = top.concat(rest).slice(0, MAX_TRACKS);
   }
-  // Yarım okunan kütüphane saklanmaz.
-  if (!warn.length && tracks.length) ls.set('libcache', { v: CACHE_V, idx: auth.idx, uid: auth.user.id, at: Date.now(), tracks });
+  // Okuma yarıda kesildiyse (kota) ve elde daha dolu bir kayıt varsa o kullanılır; yarım liste saklanmaz.
+  if (warn.length && kept && kept.uid === auth.user.id && kept.tracks.length >= tracks.length) return fromKept(kept, blockedFor() > 0);
+  if (!warn.length && tracks.length) ls.set('libcache', { v: CACHE_V, uid: auth.user.id, user: auth.user, at: Date.now(), tracks });
   return { user: auth.user, tracks, warn };
 }
 
