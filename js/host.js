@@ -91,6 +91,7 @@ export class HostGame {
     this.win = null;
     this.ts = 0; // takım puanı
     this.duels = new Map(); // oyuncu ve eşleşme başına düello sayısı
+    this.owners = []; // son şarkıların kimden geldiği (rastgele seçimde üst üste gelmeyi sınırlamak için)
     this.skips = 0;
     this.cd = 0;
     this.ev = null;
@@ -450,9 +451,18 @@ export class HostGame {
   // Oyuncunun içinden de önce kaynak, sonra şarkı seçilir ki az sayıdaki "sık dinlenenler"
   // binlerce liste şarkısının arasında kaybolmasın.
   #pick() {
-    const order = this.rot.filter((id) => this.players.has(id));
+    // Cevabın "şarkı kimin" olduğu modlarda (kim dinliyor, düello) şarkının kimden geleceği
+    // sırayla değil rastgele seçilir: sıra belli olursa cevap da belli olur. Yalnızca aynı
+    // kişiden üst üste üçten fazla gelmesi engellenir. Diğer modlarda sırayla gidilir.
+    const random = this.set.mode === 'duel' || this.set.mode === 'who';
+    let order = this.rot.filter((id) => this.players.has(id));
+    if (random) {
+      order = shuffle(order);
+      const last = this.owners.slice(-3);
+      if (last.length === 3 && last.every((id) => id === last[0])) order = order.filter((id) => id !== last[0]).concat(last[0]);
+    }
     for (let k = 0; k < order.length; k++) {
-      const at = (this.rotI + k) % order.length;
+      const at = random ? k : (this.rotI + k) % order.length;
       const lib = this.libs.get(order[at]);
       if (!lib?.ready) continue;
       const buckets = new Map();
@@ -483,7 +493,8 @@ export class HostGame {
         const shared = shuffle(bucket.slice()).slice(0, 150).find((e) => this.#listeners(e).length > 1);
         if (shared) chosen = shared;
       }
-      this.rotI = (at + 1) % order.length;
+      if (random) this.owners = this.owners.concat(order[at]).slice(-3);
+      else this.rotI = (at + 1) % order.length;
       return chosen;
     }
     return null;
@@ -758,6 +769,7 @@ export class HostGame {
     this.know = {};
     this.ts = 0;
     this.duels = new Map();
+    this.owners = [];
     this.skips = 0;
     this.round = null;
     this.next = null;
