@@ -1500,19 +1500,14 @@ const CROWN = `<svg class="crown" viewBox="0 0 120 78" aria-hidden="true">
   <circle class="c-red" cx="60" cy="50" r="6"/><circle class="c-blue" cx="34" cy="54" r="4.5"/><circle class="c-blue" cx="86" cy="54" r="4.5"/>
 </svg>`;
 
+// Profil: oyuncunun baş harfi yerinde durur; üstüne çizgiyle kaş, altına ağız eklenir.
 const face = (p, mood) => `<svg class="dface ${mood}" viewBox="0 0 100 100" style="--h:${p.hue}" role="img" aria-label="${esc(p.name)}">
   <circle class="f-skin" cx="50" cy="50" r="46"/>
-  <path class="f-shine" d="M22 36c5-12 15-19 27-21"/>
+  <text class="f-letter" x="50" y="53" text-anchor="middle" dominant-baseline="central">${esc(initial(p.name))}</text>
   ${
     mood === 'happy'
-      ? `<path class="f-line" d="M27 44q9-10 18 0M55 44q9-10 18 0"/>
-         <path class="f-mouth" d="M30 60q20 24 40 0z"/><path class="f-tongue" d="M41 71q9 8 18 0-9-5-18 0z"/>
-         <circle class="f-cheek" cx="24" cy="60" r="6"/><circle class="f-cheek" cx="76" cy="60" r="6"/>`
-      : `<path class="f-line brow" d="M24 40l19-9M76 40l-19-9"/>
-         <ellipse class="f-eye" cx="35" cy="50" rx="5" ry="6.5"/><ellipse class="f-eye" cx="65" cy="50" rx="5" ry="6.5"/>
-         <circle class="f-glint" cx="36.5" cy="48" r="1.6"/><circle class="f-glint" cx="66.5" cy="48" r="1.6"/>
-         <path class="f-line" d="M35 76q15-15 30 0"/>
-         <path class="f-tear" d="M71 58c-4 6-5 9-5 11a5 5 0 0 0 10 0c0-2-1-5-5-11z"/>`
+      ? '<path class="f-line" d="M24 29q10-9 20 0M56 29q10-9 20 0M33 76q17 13 34 0"/>'
+      : '<path class="f-line" d="M23 33l20-9M77 33l-20-9M34 84q16-12 32 0"/>'
   }
 </svg>`;
 

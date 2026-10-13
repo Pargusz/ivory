@@ -2493,75 +2493,21 @@ a.btn {
 
 .f-skin {
   fill: var(--c);
-  stroke: #16161d;
-  stroke-width: 3;
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 4;
 }
 
-.f-shine {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.55);
-  stroke-width: 5;
-  stroke-linecap: round;
+.f-letter {
+  fill: #0a0a10;
+  font: 900 36px/1 var(--display);
 }
 
 .f-line {
   fill: none;
-  stroke: #16161d;
-  stroke-width: 5;
+  stroke: #0a0a10;
+  stroke-width: 5.5;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.f-line.brow {
-  stroke-width: 6;
-}
-
-.f-eye {
-  fill: #16161d;
-}
-
-.f-glint {
-  fill: #fff;
-}
-
-.f-mouth {
-  fill: #16161d;
-  stroke: #16161d;
-  stroke-width: 4;
-  stroke-linejoin: round;
-}
-
-.f-tongue {
-  fill: #ff6b81;
-}
-
-.f-cheek {
-  fill: rgba(255, 93, 115, 0.45);
-}
-
-.f-tear {
-  fill: #7fd8ff;
-  stroke: #16161d;
-  stroke-width: 2;
-  transform-origin: 71px 58px;
-  animation: tear 2.2s ease-in infinite;
-}
-
-@keyframes tear {
-  0%,
-  35% {
-    opacity: 0;
-    translate: 0 -4px;
-    scale: 0.5;
-  }
-  55% {
-    opacity: 1;
-    scale: 1;
-  }
-  100% {
-    opacity: 0;
-    translate: 0 16px;
-  }
 }
 
 .champ b {
