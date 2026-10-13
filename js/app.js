@@ -1,6 +1,6 @@
 // Arayüz: ekranlar, etkileşimler ve oturumun (host ya da oyuncu) bağlanması.
 
-import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, squash, CODE_LEN } from './util.js';
+import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, squash, sleep, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
 import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS } from './host.js';
@@ -8,7 +8,7 @@ import { ClientSession } from './client.js';
 import { Playback } from './audio.js';
 import { FL, PL, AL, SOURCES, encodeLib } from './lib.js';
 import { demoLibrary, demoMeta, isDemo } from './demo.js';
-import { lyrics, hintLines } from './lyrics.js';
+import { lyrics, hintLines, startAt } from './lyrics.js';
 
 const CFG = {
   spotifyClientIds: [],
@@ -201,7 +201,16 @@ function saveAsks() {
   update();
 }
 
+// Host için: şarkının başlık bilgisi. "Şarkıyı bil" modunda kesitin başlayacağı yer de (at)
+// eklenir: başı sessiz şarkılar sözlerin başladığı yerden çalar.
 async function resolveMeta(id) {
+  const m = await trackMeta(id);
+  if (!m || app.st?.set.mode !== 'name') return m;
+  const lines = await Promise.race([lyrics(id, m), sleep(3500).then(() => null)]);
+  return { ...m, at: startAt(lines, m.dur) };
+}
+
+async function trackMeta(id) {
   if (meta.has(id)) return meta.get(id);
   if (isDemo(id)) return demoMeta(id);
   if (spotify.authed()) {
@@ -371,7 +380,7 @@ function applyState(st) {
     const full = !!playback.cur && playback.cur.id === rd?.id && !playback.cur.limit;
     if (!want) playback.stop();
     else if (st.phase !== 'guess') full || playback.play({ id: rd.id, pos: rd.pos });
-    else if (rd.done.includes(me.id)) playback.play({ id: rd.id, pos: 0 });
+    else if (rd.done.includes(me.id)) playback.play({ id: rd.id, pos: rd.meta?.at || 0 });
     else {
       playSnippet();
       const id = rd.id;
@@ -431,7 +440,7 @@ const stageOf = (st) => (coop(st) ? st.rd.gs : app.g.stage);
 
 function playSnippet() {
   const st = app.st;
-  if (st?.rd) playback.play({ id: st.rd.id, pos: 0, limit: GUESS_STEPS[stageOf(st)] * 1000, secret: true });
+  if (st?.rd) playback.play({ id: st.rd.id, pos: st.rd.meta?.at || 0, limit: GUESS_STEPS[stageOf(st)] * 1000, secret: true });
 }
 
 // Tahmin kutusuna yazılanı içeren şarkılar: önce kendi kütüphanem, sonra Spotify araması.
@@ -486,7 +495,7 @@ function finishGuess(ok) {
   if (coop(st)) return sendTurn(ok);
   app.g.done = ok ? 'ok' : 'fail';
   sendToCore({ t: 'g', r: st.rd.n, ok: ok ? 1 : 0, s: app.g.stage });
-  playback.play({ id: st.rd.id, pos: 0 });
+  playback.play({ id: st.rd.id, pos: st.rd.meta?.at || 0 });
   update();
 }
 
@@ -1282,7 +1291,7 @@ function guessView(st) {
   const sent = team && g.sent === rd.gs;
   const last = stage >= GUESS_STEPS.length - 1;
   const playing = playback.status === 'playing' || playback.status === 'loading';
-  const lines = done ? [] : hintLines(app.lyr, stage, m?.name);
+  const lines = done ? [] : hintLines(app.lyr, stage, m?.name, (m?.at || 0) / 1000);
   const steps = GUESS_STEPS.map((sec, i) => `<li class="${done ? '' : i < stage ? 'past' : i === stage ? 'on' : ''}"><b>${sec} sn</b><span>+${GUESS_PTS[i]}</span></li>`).join('');
 
   let body;

@@ -405,6 +405,7 @@ export class Playback {
     this.wantSeek = track.pos > 0 ? Math.floor(track.pos / 1000) : null;
     this.loadedAt = Date.now();
     this.live = false;
+    this.seeked = 0;
     if (this.ctrl && this.ctrlHost === host && host.querySelector('iframe')) {
       if (this.ctrlUri === uri && typeof this.ctrl.restart === 'function') {
         // Aynı şarkı (kesiti yeniden dinleme, sonraki aşama): yeniden yüklemeden baştan çal.
@@ -458,14 +459,17 @@ export class Playback {
       if (data.duration > 60000 && at * 1000 < data.duration - 20000 && data.position < 5000) {
         try {
           this.ctrl.seek(at);
+          this.seeked = at * 1000;
         } catch {}
       }
     }
     // Yeniden başlatmanın hemen ardından eski konum gelebilir; kesit süresini ona göre kurma.
     // Süre, ses gerçekten ilerlemeye başlayınca (konum > 0) kurulur ki kesit kısa kalmasın.
-    const sane = data.position > 0 && data.position <= Date.now() - this.loadedAt + 1500;
+    // Şarkı ortadan başlatıldıysa (seeked) süre, sarılan yerden itibaren sayılır.
+    const heard = data.position - this.seeked;
+    const sane = heard > 0 && heard <= Date.now() - this.loadedAt + 1500;
     if (playing && sane && this.cur.limit && this.status !== 'ended' && !this.limitTimer) {
-      this.#endAfter(this.token, this.cur.limit - data.position, () => this.#pauseEmbed());
+      this.#endAfter(this.token, this.cur.limit - heard, () => this.#pauseEmbed());
     }
     if (this.status === 'ended') return;
     if (playing) this.#set('playing');

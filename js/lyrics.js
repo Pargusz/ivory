@@ -7,6 +7,8 @@ import { GUESS_STEPS } from './host.js';
 const API = 'https://lrclib.net/api';
 const MIN_LINES = [0, 1, 3]; // aşama başına en az gösterilecek satır
 const MAX_LINES = 4;
+const QUIET_S = 6; // sözler bundan geç başlıyorsa şarkının başı tahmin için fazla sessiz sayılır
+const LEAD_S = 1.5;
 const cache = new Map();
 
 function parse(rec) {
@@ -48,11 +50,21 @@ export function lyrics(id, meta) {
   return cache.get(id);
 }
 
+// Kesitin başlayacağı yer (ms): girişi uzun şarkılarda sözlerin başladığı anın hemen öncesi.
+// Zaman bilgili söz yoksa şarkı baştan çalar.
+export function startAt(lines, dur) {
+  const first = lines?.find((l) => l.t != null)?.t;
+  if (first == null || first < QUIET_S) return 0;
+  const at = Math.round((first - LEAD_S) * 1000);
+  return dur && at > dur - 40000 ? 0 : at;
+}
+
 // Aşamaya göre gösterilecek satırlar: dinlenen kesitte geçenler, yoksa şarkının ilk satırları.
-// Şarkının adındaki sözcükler gizlenir ki ipucu cevabı vermesin.
-export function hintLines(lines, stage, title) {
-  if (!lines?.length) return [];
-  const heard = lines.filter((l) => l.t != null && l.t <= GUESS_STEPS[stage]);
+// Şarkının adındaki sözcükler gizlenir ki ipucu cevabı vermesin. `from`: kesitin başladığı saniye.
+export function hintLines(lines, stage, title, from = 0) {
+  // İlk aşama ipucusuzdur: kesit sözlerin başından çalabildiği için sözler cevabı ele verirdi.
+  if (!lines?.length || !stage) return [];
+  const heard = lines.filter((l) => l.t != null && l.t <= from + GUESS_STEPS[stage]);
   const picked = heard.length >= MIN_LINES[stage] ? heard.slice(-MAX_LINES) : lines.slice(0, MIN_LINES[stage]);
   const words = baseTitle(title)
     .split(/[^\p{L}\p{N}]+/u)
