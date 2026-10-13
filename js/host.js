@@ -23,6 +23,7 @@ const READY_MS = 3500; // seyirci yoksa düello öncesi kısa bekleme
 const DUEL_MS = 30000;
 const DUEL_WIN = 3; // düelloyu kazanan
 const BET_WIN = 2; // kazanana oynayan seyirci
+const SOLO_SCAN = 400; // tek dinleyicili şarkı ararken oyuncu başına bakılan en çok şarkı
 const RIGHT = 3;
 const WRONG = -1;
 
@@ -32,9 +33,11 @@ export const TIME_OPTIONS = [15, 30, 45, 60];
 // "Şarkıyı bil" modu: şarkının başı 5, 10, 20 saniye dinlenir; ne kadar erken bilinirse o kadar puan.
 export const GUESS_STEPS = [5, 10, 20];
 export const GUESS_PTS = [5, 3, 2];
-// Düello: iki oyuncu karşı karşıya gelir, şarkıyı ilk bilen kazanır; diğerleri bahis oynar.
-// Kaybedene oynanan her para kazananın olur.
-export const DUEL_SNIP = 20; // düelloda şarkının çaldığı saniye
+// Düello: yalnızca bir kişinin dinlediği bir şarkı çalar; karşı karşıya gelen iki oyuncudan
+// o kişiyi ilk bilen kazanır. Diğerleri bahis oynar; kaybedene oynanan her para kazananın olur.
+// Az bahis alan taraf kazanırsa ödüller iki katıdır.
+export const JAM_MS = 2500; // yanlış tahminden sonra silahın tutukluk süresi
+export const DUEL_WIN_OPTIONS = [15, 30, 50, 75, 100];
 // mode: who = kim dinliyor, name = şarkıyı bil, duel = düello. team (yalnızca name modunda): herkes tek takımdır,
 // sırayla tahmin eder; bilemeyen sırayı bir sonrakine, şarkıyı bir sonraki aşamaya geçirir.
 export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true, mode: 'who', team: false };
@@ -293,14 +296,17 @@ export class HostGame {
   #guess(p, m) {
     const r = this.round;
     if (this.phase === 'duel' && r && m.r === r.n) {
-      // Düello: ilk doğru bilen kazanır; yanlış tahmin "tutukluk" olarak herkese gösterilir.
+      // Düello: şarkıyı kimin dinlediğini ilk bilen kazanır. Doğruluğu host denetler; yanlış
+      // tahmin silahı bir süre tutuklar ve herkese gösterilir.
       const side = r.duel.indexOf(p.id);
-      if (side < 0) return;
-      if (m.ok) {
+      const now = Date.now();
+      if (side < 0 || now < (r.jam[p.id] || 0) || !this.players.has(m.w)) return;
+      if (r.ls.includes(m.w)) {
         r.win = side;
         this.#revealDuel();
       } else {
         r.miss[p.id] = (r.miss[p.id] || 0) + 1;
+        r.jam[p.id] = now + JAM_MS - 300;
         this.dirty = true;
       }
       return;
@@ -349,9 +355,12 @@ export class HostGame {
       const winner = this.players.get(r.duel[r.win]);
       const bettors = Object.entries(r.bets).filter(([id]) => this.players.has(id));
       const lost = bettors.filter(([, k]) => k !== r.win).length;
+      // Az bahis alan taraf kazandıysa (azınlık) ödüller iki katı: geride kalana dönüş şansı.
+      r.x2 = bettors.length - lost < lost;
+      const mult = r.x2 ? 2 : 1;
       // Kaybedene oynanan paralar kazananın olur.
-      if (winner) r.dl[winner.id] = DUEL_WIN + lost;
-      for (const [id, k] of bettors) if (k === r.win) r.dl[id] = BET_WIN;
+      if (winner) r.dl[winner.id] = DUEL_WIN + lost * mult;
+      for (const [id, k] of bettors) if (k === r.win) r.dl[id] = BET_WIN * mult;
       for (const [id, delta] of Object.entries(r.dl)) this.players.get(id).sc += delta;
     }
     this.phase = 'reveal';
@@ -438,7 +447,19 @@ export class HostGame {
       if (!buckets.size) continue;
       const bucket = pick([...buckets.values()]);
       let chosen = pick(bucket);
-      if (Math.random() < SHARED_BIAS) {
+      if (this.set.mode === 'duel') {
+        // Düelloda yalnızca bir kişinin dinlediği şarkı aranır; yoksa en az dinleyenli olan alınır.
+        const sample = shuffle([...buckets.values()].flat()).slice(0, SOLO_SCAN);
+        let fewest = Infinity;
+        for (const e of sample) {
+          const n = this.#listeners(e).length;
+          if (n && n < fewest) {
+            fewest = n;
+            chosen = e;
+            if (n === 1) break;
+          }
+        }
+      } else if (Math.random() < SHARED_BIAS) {
         const shared = shuffle(bucket.slice()).slice(0, 150).find((e) => this.#listeners(e).length > 1);
         if (shared) chosen = shared;
       }
@@ -475,8 +496,8 @@ export class HostGame {
   #startRound() {
     this.#prepare();
     const t = this.next;
-    const name = this.set.mode !== 'who';
-    // Şarkıyı bil ve düello modlarında başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
+    const name = this.set.mode === 'name';
+    // Şarkıyı bil modunda başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
     if (t && name && !t.meta?.name && this.skips < 12) {
       if (t.settled || Date.now() - t.at > META_WAIT_MS) {
         this.skips++;
@@ -514,7 +535,7 @@ export class HostGame {
         return;
       }
       const watchers = [...this.players.values()].some((p) => p.on && !duel.includes(p.id));
-      Object.assign(this.round, { duel, bets: {}, miss: {}, win: null, bt1: t0 + (watchers ? BET_MS : READY_MS) });
+      Object.assign(this.round, { duel, bets: {}, miss: {}, jam: {}, win: null, x2: false, bt1: t0 + (watchers ? BET_MS : READY_MS) });
       this.phase = 'bet';
       this.dirty = true;
       return;
@@ -654,10 +675,12 @@ export class HostGame {
     const s = { ...this.set, ...patch };
     s.src &= FL | PL | AL;
     if (!s.src) return;
-    if (!WIN_OPTIONS.includes(s.win) || !TIME_OPTIONS.includes(s.time)) return;
+    s.mode = ['who', 'name', 'duel'].includes(s.mode) ? s.mode : 'who';
+    // 100 puan yalnızca düelloda var; başka moda geçilince en yakın seçeneğe iner.
+    if (s.mode !== 'duel' && s.win > 75) s.win = 75;
+    if (!(s.mode === 'duel' ? DUEL_WIN_OPTIONS : WIN_OPTIONS).includes(s.win) || !TIME_OPTIONS.includes(s.time)) return;
     s.mid = !!s.mid;
     s.ex = !!s.ex;
-    s.mode = ['who', 'name', 'duel'].includes(s.mode) ? s.mode : 'who';
     s.team = !!s.team;
     this.set = s;
     this.dirty = true;
@@ -815,7 +838,7 @@ export class HostGame {
       if (this.phase === 'reveal') Object.assign(st.rd, { ls: r.ls, vt: r.votes, dl: r.dl, cont: r.cont });
       if (this.phase === 'reveal' && r.res) Object.assign(st.rd, { res: r.res, first: r.first, td: r.td });
       if (r.duel) Object.assign(st.rd, { duel: r.duel, bets: r.bets, miss: r.miss, bt1: r.bt1 });
-      if (r.duel && this.phase === 'reveal') st.rd.win = r.win;
+      if (r.duel && this.phase === 'reveal') Object.assign(st.rd, { win: r.win, x2: r.x2 });
     }
     if (this.phase === 'won') st.win = this.win;
     if (this.ev) st.ev = { id: this.ev.id, k: this.ev.k, who: this.ev.who };

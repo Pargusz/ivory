@@ -2254,8 +2254,68 @@ a.btn {
   }
 }
 
-.guess.jammed input {
-  border-color: var(--bad);
+.targets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.targets button {
+  --c: oklch(0.82 0.15 var(--h));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 18px 8px 10px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in oklch, var(--c) 55%, transparent);
+  background: color-mix(in oklch, var(--c) 14%, transparent);
+  font-weight: 800;
+  font-size: 16px;
+  transition: transform 0.12s, background 0.15s, opacity 0.2s;
+}
+
+.targets button:not(:disabled):hover {
+  background: color-mix(in oklch, var(--c) 30%, transparent);
+  transform: translateY(-2px);
+}
+
+.targets button:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+.targets.locked button {
+  opacity: 0.4;
+}
+
+.targets.locked button.on {
+  opacity: 1;
+  background: color-mix(in oklch, var(--c) 40%, transparent);
+}
+
+.answer .owner {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 18px;
+}
+
+.answer .owner .av {
+  width: 30px;
+  height: 30px;
+  font-size: 12px;
+}
+
+.answer .x2 {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ffd84d, #ff9f45);
+  color: #2a1700;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 /* ---------- tepkiler ve oyun sonu özeti ---------- */

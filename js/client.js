@@ -26,6 +26,7 @@ export class ClientSession {
     this.pendingCont = null;
     this.pendingGuess = null;
     this.pendingBet = null;
+    this.pendingPick = null;
     this.gone = false;
   }
 
@@ -87,9 +88,11 @@ export class ClientSession {
     this.send({ t: 'g', r: round, ok, s });
   }
 
-  // Düelloda yanlış tahmin: yalnızca görsel, bir kez gönderilir.
-  miss(round) {
-    this.send({ t: 'g', r: round, ok: 0 });
+  // Düelloda "şarkıyı bu kişi dinliyor" tahmini. Host sonucu (kazandı ya da ıskaladı) yayınlayana
+  // kadar yinelenir.
+  pick(round, who) {
+    this.pendingPick = { r: round, w: who, miss: this.state?.rd?.miss?.[this.me.id] || 0, at: Date.now() };
+    this.send({ t: 'g', r: round, w: who });
   }
 
   bet(round, k) {
@@ -144,6 +147,14 @@ export class ClientSession {
       else if (now - g.at > RESEND_MS) {
         g.at = now;
         this.send({ t: 'g', r: g.r, ok: g.ok, s: g.s });
+      }
+    }
+    const k = this.pendingPick;
+    if (k) {
+      if (!rd || rd.n !== k.r || st.phase !== 'duel' || (rd.miss?.[this.me.id] || 0) !== k.miss) this.pendingPick = null;
+      else if (now - k.at > RESEND_MS) {
+        k.at = now;
+        this.send({ t: 'g', r: k.r, w: k.w });
       }
     }
     const b = this.pendingBet;

@@ -3,7 +3,7 @@
 import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, artistMatch, squash, sleep, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
-import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS, DUEL_SNIP } from './host.js';
+import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS, JAM_MS, DUEL_WIN_OPTIONS } from './host.js';
 import { ClientSession } from './client.js';
 import { Playback } from './audio.js';
 import { FL, PL, AL, SOURCES, encodeLib } from './lib.js';
@@ -205,7 +205,7 @@ function saveAsks() {
 // eklenir: başı sessiz şarkılar sözlerin başladığı yerden çalar.
 async function resolveMeta(id) {
   const m = await trackMeta(id);
-  if (!m || (app.st?.set.mode || 'who') === 'who') return m;
+  if (!m || app.st?.set.mode !== 'name') return m;
   const lines = await Promise.race([lyrics(id, m), sleep(3500).then(() => null)]);
   return { ...m, at: startAt(lines, m.dur) };
 }
@@ -378,7 +378,14 @@ function applyState(st) {
   // Tahmin aşamasında şarkının kesiti, diğerlerinde tamamı çalar.
   // Takım oyununda aşama herkes için ortaktır; aşama değişince yeni kesit çalar.
   // Düelloda bahis sırasında ses yoktur; düello başlayınca şarkı herkese çalar.
-  const want = !rd ? 0 : st.phase === 'guess' ? `g${rd.n}:${rd.gs ?? ''}` : st.phase === 'duel' ? 'd' + rd.n : st.phase === 'vote' || st.phase === 'reveal' ? rd.n : 0;
+  const want = !rd ? 0 : st.phase === 'guess' ? `g${rd.n}:${rd.gs ?? ''}` : ['vote', 'duel', 'reveal'].includes(st.phase) ? rd.n : 0;
+  // Host yanlış tahminimi bildirdi: silah tutukluk yapar.
+  const missed = rd?.miss?.[me.id] || 0;
+  if (rd?.duel && missed > (app.g.missed || 0)) {
+    app.g.missed = missed;
+    app.g.fired = null;
+    app.g.jam = Date.now() + JAM_MS;
+  }
   if (rd?.duel && st.phase === 'reveal' && rd.win >= 0 && app.shot !== rid(st)) {
     app.shot = rid(st);
     shotSound();
@@ -388,7 +395,6 @@ function applyState(st) {
     // Tahminini bitiren şarkının tamamını zaten dinliyordur; açıklamada baştan başlatma.
     const full = !!playback.cur && playback.cur.id === rd?.id && !playback.cur.limit;
     if (!want) playback.stop();
-    else if (st.phase === 'duel') playback.play({ id: rd.id, pos: rd.meta?.at || 0, limit: DUEL_SNIP * 1000, secret: true });
     else if (st.phase !== 'guess') full || playback.play({ id: rd.id, pos: rd.pos });
     else if (rd.done.includes(me.id)) playback.play({ id: rd.id, pos: rd.meta?.at || 0 });
     else {
@@ -437,9 +443,8 @@ const hasVoted = (st) => app.voteSent === rid(st) || st.rd.voted.includes(me.id)
 const hasContinued = (st) => app.contSent === rid(st) || st.rd.cont.includes(me.id);
 
 function sendToCore(msg) {
-  // gm: düelloda ıskalama (yanlış tahmin); host'a "bilemedi" olarak gider.
-  if (isHost()) app.s.core.handle(msg.t === 'gm' ? { t: 'g', r: msg.r, ok: 0, f: me.id } : { ...msg, f: me.id });
-  else if (msg.t === 'gm') app.s.core.miss(msg.r);
+  if (isHost()) app.s.core.handle({ ...msg, f: me.id });
+  else if (msg.t === 'g' && msg.w) app.s.core.pick(msg.r, msg.w);
   else if (msg.t === 'b') app.s.core.bet(msg.r, msg.k);
   else if (msg.t === 'v') app.s.core.vote(msg.r, msg.b);
   else if (msg.t === 'c') app.s.core.cont(msg.r);
@@ -501,7 +506,6 @@ function isRight(text, st) {
   return titleMatch(text, st.rd.meta?.name, st.rd.meta?.artists) && (!picked || artistMatch(picked.artists, st.rd.meta?.artists));
 }
 
-const JAM_MS = 2500;
 let shotCtx = null;
 
 // Düelloda atılan kurşunun sesi: kısa, sönümlenen bir gürültü patlaması.
@@ -728,23 +732,12 @@ const actions = {
     sendToCore({ t: 'b', r: st.rd.n, k: app.g.bet });
     update();
   },
-  // Düellocunun atışı: doğruysa kazanır, yanlışsa silahı kısa süre tutukluk yapar.
-  shot: () => {
+  // Düellocunun atışı: "şarkıyı bu kişi dinliyor". Sonucu host söyler.
+  shot: ({ id }) => {
     const st = app.st;
-    const text = app.g.text.trim();
-    if (st?.phase !== 'duel' || !st.rd.duel.includes(me.id) || app.g.done || !text || app.g.jam > Date.now()) return;
-    clearTimeout(sugTimer);
-    app.g.sug = [];
-    if (isRight(text, st)) {
-      app.g.done = 'ok';
-      sendToCore({ t: 'g', r: st.rd.n, ok: 1, s: 0 });
-    } else {
-      app.g.jam = Date.now() + JAM_MS;
-      app.g.text = '';
-      const el = $('[data-model="guess"]');
-      if (el) el.value = '';
-      sendToCore({ t: 'gm', r: st.rd.n });
-    }
+    if (st?.phase !== 'duel' || !st.rd.duel.includes(me.id) || app.g.fired || app.g.jam > Date.now()) return;
+    app.g.fired = id;
+    sendToCore({ t: 'g', r: st.rd.n, w: id });
     update();
   },
   sug: ({ i }) => {
@@ -1025,7 +1018,7 @@ function settingsView(st, host) {
         (s) => `<button class="${set.src & s.bit ? 'on' : ''}" ${host ? `data-act="set" data-k="src" data-v="${s.bit}"` : 'disabled'} aria-pressed="${!!(set.src & s.bit)}">${s.label}</button>`
       ).join('')}</div>
     </div>
-    <div class="set-row"><span>Kaç puana kadar?</span>${seg('win', WIN_OPTIONS.map((v) => [v, v]), set.win)}</div>
+    <div class="set-row"><span>Kaç puana kadar?</span>${seg('win', (set.mode === 'duel' ? DUEL_WIN_OPTIONS : WIN_OPTIONS).map((v) => [v, v]), set.win)}</div>
     ${
       set.mode !== 'who'
         ? ''
@@ -1042,10 +1035,10 @@ function lobbyView(st) {
   const teams = teamsOn(st);
   const rules =
     st.set.mode === 'duel'
-      ? `<li>Her turda iki oyuncu karşı karşıya gelir; şarkı çalar, adını <b>ilk bilen</b> ateş eder.</li>
-        <li>Diğerleri önce bahis oynar: kimin kazanacağını düşünüyorsan parasını onun yanına koyarsın.</li>
-        <li>Düelloyu kazanan <b class="up">+3</b>, ayrıca rakibine oynanan her para için <b class="up">+1</b> alır.</li>
-        <li>Kazanana oynayan seyirci <b class="up">+2</b> alır. Yanlış tahmin silahı ${JAM_MS / 1000} saniye tutuklar.</li>
+      ? `<li>Her turda iki oyuncu karşı karşıya gelir. Yalnızca <b>bir kişinin</b> dinlediği bir şarkı çalar; o kişinin kim olduğunu <b>ilk bilen</b> ateş eder.</li>
+        <li>Diğerleri önce bahis oynar: kimin kazanacağını düşünüyorsan paranı onun yanına koyarsın.</li>
+        <li>Düelloyu kazanan <b class="up">+3</b>, ayrıca rakibine oynanan her para için <b class="up">+1</b> alır. Kazanana oynayan <b class="up">+2</b> alır.</li>
+        <li>Az bahis alan taraf kazanırsa bu ödüller <b class="up">iki katı</b> olur. Yanlış tahmin silahı ${JAM_MS / 1000} saniye tutuklar.</li>
         <li><b>${st.set.win} puana</b> ilk ulaşan kazanır.</li>`
       : st.set.mode === 'name'
       ? `<li>Şarkının ilk <b>${GUESS_STEPS[0]} saniyesi</b> çalar; adını yazıp tahmin edersin.</li>
@@ -1533,30 +1526,29 @@ function duelView(st) {
     title = mySide >= 0 ? 'Hazır ol…' : 'Bahisler!';
     controls =
       mySide >= 0
-        ? `<p class="waiting"><span class="pulse"></span>Şarkı birazdan çalacak · adını ilk yazan kazanır</p>`
+        ? `<p class="waiting"><span class="pulse"></span>Şarkı birazdan çalacak · kimin dinlediğini ilk bilen kazanır</p>`
         : `<div class="ask"><h3>Kim kazanır?</h3><p>${myBet == null ? 'Paranı koymak için bir düellocuya dokun' : `Paran <b>${esc(P.get(rd.duel[myBet])?.name || '')}</b> üzerinde · değiştirebilirsin`}</p></div>`;
   } else if (phase === 'duel') {
     title = mySide >= 0 ? 'Çek silahını!' : 'Düello başladı';
     if (mySide < 0) {
       controls = `<p class="waiting"><span class="pulse"></span>${myBet == null ? 'Bahis oynamadın · izliyorsun' : `Paran ${esc(P.get(rd.duel[myBet])?.name || '')} üzerinde`}</p>`;
-    } else if (app.g.done) {
-      controls = `<p class="waiting"><span class="pulse"></span>Ateş ettin…</p>`;
     } else {
+      const locked = jam || app.g.fired;
       controls = `
-      <form class="guess ${jam ? 'jammed' : ''}" data-submit="shot" data-key="shot">
-        <input data-model="guess" ${jam ? 'readonly' : ''} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" maxlength="80" placeholder="${jam ? `Tutukluk! ${Math.ceil(jam / 1000)} sn` : 'Şarkının adını yaz, ateş et'}" aria-label="Tahminin">
-        <button class="btn primary" type="submit" ${jam ? 'disabled' : ''}>Ateş!</button>
-        ${g_sug()}
-      </form>`;
+      <div class="ask"><h3>Bu şarkıyı kim dinliyor?</h3><p>${jam ? `<b class="down">Tutukluk! ${Math.ceil(jam / 1000)} sn</b>` : app.g.fired ? 'Ateş ettin…' : 'İlk doğru basan kazanır · yanlış basarsan silah tutuklar'}</p></div>
+      <div class="targets ${locked ? 'locked' : ''}" data-key="targets">
+        ${st.pl.map((p) => `<button data-act="shot" data-id="${p.id}" style="--h:${p.hue}" class="${app.g.fired === p.id ? 'on' : ''}" ${locked ? 'disabled' : ''}>${av(p)}<span>${p.id === me.id ? 'Ben' : esc(p.name)}</span></button>`).join('')}
+      </div>`;
     }
   } else {
     title = win < 0 ? 'Kimse çekemedi' : `${esc(winner?.name || '')} vurdu!`;
     const mine = rd.dl?.[me.id];
+    const owners = (rd.ls || []).map((id) => P.get(id)).filter(Boolean);
     const lost = mySide < 0 && myBet != null && win >= 0 && myBet !== win;
     controls = `
       <div class="answer ${win >= 0 ? 'ok' : ''}">
-        <p class="title">${esc(m?.name || 'Şarkı')}</p>
-        <p class="artist">${esc(m?.artists || '')}</p>
+        <p class="owner">${owners.length ? `Bu şarkıyı ${owners.map((p) => `${av(p)}<b>${esc(p.id === me.id ? 'sen' : p.name)}</b>`).join(' ve ')} ${owners.length === 1 && owners[0].id === me.id ? 'dinliyorsun' : 'dinliyor'}` : ''}</p>
+        ${rd.x2 ? '<p class="x2">Azınlık kazandı · ödüller 2 katı</p>' : ''}
         <h3>${win < 0 ? 'Berabere · puan yok' : mine ? `Bu turdan <b class="up">${signed(mine)} puan</b> aldın` : lost ? 'Paran karşı tarafa gitti' : 'Bu turdan puan almadın'}</h3>
         ${saveButton(rd)}
       </div>
@@ -1567,10 +1559,11 @@ function duelView(st) {
   return `
   <main class="play" data-key="duel">
     <div class="play-main g">
-      ${audioView(rd, m, !reveal)}
+      ${audioView(rd, m)}
       <header class="now">
         <div class="kicker"><span>Düello ${rd.no}</span></div>
         <h2 class="title">${title}</h2>
+        <p class="artist">${phase === 'bet' ? 'Şarkı düello başlayınca çalacak' : `♪ ${esc(m?.name || 'Şarkı çalıyor…')}${m?.artists ? ' · ' + esc(m.artists) : ''}`}</p>
       </header>
       <div class="arena ${phase}" data-key="arena">
         ${gunman(0)}
@@ -1726,7 +1719,7 @@ function howModal() {
       <li>Herkes “Devam” deyince sıradaki şarkı başlar. Hedef puana ilk ulaşan kazanır.</li>
     </ol>
     <p class="note"><b>Şarkıyı bil modu:</b> host oda ayarlarından açar. Şarkının ilk 5 saniyesi çalar, adını yazarsın; bilemezsen 10, sonra 20 saniye dinlersin. Erken bilen daha çok puan alır (5 / 3 / 2). Bireysel ya da tek takım olarak sırayla oynanır.</p>
-    <p class="note"><b>Düello modu:</b> her turda iki oyuncu karşı karşıya gelir, şarkıyı ilk bilen kazanır (+3). Diğerleri bahis oynar: kazanana oynayan +2 alır, kaybedene oynanan paralar kazananın olur.</p>
+    <p class="note"><b>Düello modu:</b> yalnızca bir kişinin dinlediği bir şarkı çalar; karşı karşıya gelen iki oyuncudan o kişiyi ilk bilen kazanır (+3). Diğerleri bahis oynar: kazanana oynayan +2 alır, kaybedene oynanan paralar kazananın olur. Az bahis alan taraf kazanırsa ödüller iki katıdır.</p>
     <p class="note">Aynı şarkının single ve albüm sürümleri tek şarkı sayılır: birinde single, diğerinde albüm hâli olsa da ikisi de dinleyen olarak çıkar.</p>
     <button class="btn primary" data-act="close">Anladım</button>`;
 }
