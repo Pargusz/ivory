@@ -95,6 +95,11 @@ export class ClientSession {
     this.send({ t: 'g', r: round, w: who });
   }
 
+  // Kapak bulmacasında yanlış tahmin: balonda gösterilmek üzere bir kez gönderilir.
+  say(round, text) {
+    this.send({ t: 'say', r: round, x: text });
+  }
+
   bet(round, k) {
     this.pendingBet = { r: round, k, at: Date.now() };
     this.send({ t: 'b', r: round, k });

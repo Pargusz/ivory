@@ -461,6 +461,7 @@ function sendToCore(msg) {
   if (isHost()) app.s.core.handle({ ...msg, f: me.id });
   else if (msg.t === 'g' && msg.w) app.s.core.pick(msg.r, msg.w);
   else if (msg.t === 'b') app.s.core.bet(msg.r, msg.k);
+  else if (msg.t === 'say') app.s.core.say(msg.r, msg.x);
   else if (msg.t === 'v') app.s.core.vote(msg.r, msg.b);
   else if (msg.t === 'c') app.s.core.cont(msg.r);
   else if (msg.t === 'sv') app.s.core.saved();
@@ -812,10 +813,18 @@ const actions = {
     if (coop(st) && st.rd.turn !== me.id) return;
     clearTimeout(sugTimer);
     app.g.sug = [];
-    if (isRight(text, st)) return finishGuess(true);
+    const cover = st.set.mode === 'cover';
+    if (isRight(text, st)) {
+      // Doğru cevabı yalnızca yazan görür (yeşil balon); diğerlerine gönderilmez.
+      if (cover) app.g.said = text;
+      return finishGuess(true);
+    }
     app.g.text = '';
-    // Kapak bulmacasında yanlış tahmin kısa bir bekleme getirir: rastgele deneme olmasın.
-    if (st.set.mode === 'cover') app.g.jam = Date.now() + 2000;
+    // Kapak bulmacasında yanlış tahmin kısa bir bekleme getirir ve herkese balonda görünür.
+    if (cover) {
+      app.g.jam = Date.now() + 2000;
+      sendToCore({ t: 'say', r: st.rd.n, x: text });
+    }
     if (coop(st)) {
       toast('Bu değil — sıra geçiyor');
       return sendTurn(false);
@@ -825,7 +834,8 @@ const actions = {
       el.value = '';
       el.animate([{ transform: 'translateX(-6px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'none' }], 320);
     }
-    toast('Bu değil, bir daha dene');
+    // Kapak bulmacasında yanlış tahmin zaten balonda görünür.
+    if (!cover) toast('Bu değil, bir daha dene');
   },
   react: ({ e }) => {
     if (app.s) sendToCore({ t: 'rx', e: Number(e) });
@@ -1534,7 +1544,7 @@ function coverView(st) {
 
   return `
   <main class="play" data-key="guess">
-    <div class="play-main g">
+    <div class="play-main g cv">
       ${audioView(rd, m, true)}
       <header class="now">
         <div class="kicker"><span>Kapak ${rd.no}</span><span class="clock ${secs <= 8 ? 'hot' : ''}">${secs} sn</span></div>
@@ -1543,6 +1553,18 @@ function coverView(st) {
       <ol class="steps">${steps}</ol>
       <div class="cover-box" data-key="cover">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer" draggable="false" style="filter:blur(${blur}px)">` : '<span>♪</span>'}</div>
       ${body}
+      <div class="crowd" data-key="crowd">
+        ${st.pl
+          .filter((p) => p.on)
+          .map((p) => {
+            // Yanlış tahminler herkese balonda görünür; doğru cevabı yalnızca yazan, yeşil görür.
+            const say = rd.says?.[p.id];
+            const mine = p.id === me.id && g.done === 'ok' && g.said;
+            const bubble = mine ? `<i class="bubble ok" data-key="ok">${esc(g.said)}</i>` : say ? `<i class="bubble" data-key="s-${esc(say[0])}">${esc(say[1])}</i>` : '';
+            return `<div class="peer ${rd.done.includes(p.id) ? 'done' : ''}" data-key="peer-${p.id}">${bubble}${av(p)}<span>${p.id === me.id ? 'sen' : esc(p.name)}</span></div>`;
+          })
+          .join('')}
+      </div>
     </div>
     ${boardView(st, P)}
   </main>`;

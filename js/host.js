@@ -4,7 +4,7 @@
 // ya da sayfa yenileme oyunu bozmaz.
 
 import { FL, PL, AL, EX, decodeChunk } from './lib.js';
-import { uid, shuffle, pick, cleanName, hueAt, skipKey } from './util.js';
+import { uid, shuffle, pick, cleanName, hueAt, skipKey, titleMatch } from './util.js';
 
 const PRESENCE_MS = 12000;
 const HEARTBEAT_MS = 2500;
@@ -40,6 +40,7 @@ export const GUESS_PTS = [5, 3, 2];
 // Sanatçıyı, albümü ya da şarkıyı ne kadar bulanıkken bilirsen o kadar puan (GUESS_PTS).
 export const COVER_STEP = 8;
 const COVER_MS = 30000;
+const SAY_MS = 3500; // kapak bulmacasında yanlış tahminin konuşma balonunda kaldığı süre
 export const JAM_MS = 2500; // yanlış tahminden sonra silahın tutukluk süresi
 export const DUEL_WIN_OPTIONS = [15, 30, 50, 75, 100];
 // mode: who = kim dinliyor, name = şarkıyı bil, duel = düello, cover = kapak bulmacası. team (yalnızca name modunda): herkes tek takımdır,
@@ -138,6 +139,7 @@ export class HostGame {
     else if (m.t === 'rx') this.#react(p, m);
     else if (m.t === 'g') this.#guess(p, m);
     else if (m.t === 'b') this.#bet(p, m);
+    else if (m.t === 'say') this.#say(p, m);
     else if (m.t === 'bye') this.#remove(p.id);
   }
 
@@ -327,6 +329,18 @@ export class HostGame {
     const stage = r.cover ? Math.floor((Date.now() - r.t0) / (COVER_STEP * 1000)) : m.s | 0;
     r.res[p.id] = [ok ? 1 : 0, Math.max(0, Math.min(GUESS_STEPS.length - 1, stage))];
     if (ok && !r.first) r.first = p.id;
+    this.dirty = true;
+  }
+
+  // Kapak bulmacasında yanlış tahmin herkese konuşma balonunda gösterilir ("kopya"). Doğru
+  // cevap asla yayınlanmaz: metin cevapla eşleşiyorsa atılır.
+  #say(p, m) {
+    const r = this.round;
+    if (this.phase !== 'guess' || !r?.cover || m.r !== r.n || r.res[p.id]) return;
+    const text = String(m.x || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    const meta = r.meta || {};
+    if (!text || [...String(meta.artists || '').split(','), meta.album, meta.name].some((c) => c && c.trim() && titleMatch(text, c.trim(), ''))) return;
+    r.says[p.id] = [uid(4), text, Date.now() + SAY_MS];
     this.dirty = true;
   }
 
@@ -570,7 +584,7 @@ export class HostGame {
       return;
     }
     if (cover) {
-      Object.assign(this.round, { t1: t0 + COVER_MS, res: {}, first: null, cover: true });
+      Object.assign(this.round, { t1: t0 + COVER_MS, res: {}, first: null, cover: true, says: {} });
       this.phase = 'guess';
       this.dirty = true;
       return;
@@ -824,6 +838,11 @@ export class HostGame {
         }
       } else if (now >= r.gt1 + VOTE_GRACE_MS) this.#turn(null, false);
     } else if (this.phase === 'guess') {
+      for (const [id, say] of Object.entries(r.says || {})) {
+        if (now < say[2]) continue;
+        delete r.says[id];
+        this.dirty = true;
+      }
       if (active.every((p) => r.res[p.id]) || now >= r.t1 + VOTE_GRACE_MS) this.#revealGuess();
     } else if (this.phase === 'reveal') {
       // Odadaki herkes "Devam" demeden sıradaki şarkıya geçilmez (kopanlar beklenmez).
@@ -872,6 +891,7 @@ export class HostGame {
       if (r.order && this.phase === 'guess') Object.assign(st.rd, { turn: r.order[r.at], gs: r.stage, t1: r.gt1 });
       if (this.phase === 'reveal') Object.assign(st.rd, { ls: r.ls, vt: r.votes, dl: r.dl, cont: r.cont });
       if (this.phase === 'reveal' && r.res) Object.assign(st.rd, { res: r.res, first: r.first, td: r.td });
+      if (r.says && this.phase === 'guess') st.rd.says = Object.fromEntries(Object.entries(r.says).map(([id, say]) => [id, say.slice(0, 2)]));
       if (r.duel) Object.assign(st.rd, { duel: r.duel, bets: r.bets, miss: r.miss, bt1: r.bt1 });
       if (r.duel && this.phase === 'reveal') Object.assign(st.rd, { win: r.win, x2: r.x2 });
     }

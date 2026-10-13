@@ -1851,6 +1851,101 @@ a.btn {
   pointer-events: none;
 }
 
+/* Oyuncular yan yana; yanlış tahminler başlarının üstünde balonda belirir ("kopya"). */
+.play-main.g > .crowd {
+  order: 2;
+}
+
+/* Profil sırasının üstünü örtmesin diye bu ekranda alt düğme sayfaya yapışmaz. */
+.play-main.cv > .dock {
+  position: static;
+  padding-top: 6px;
+  background: none;
+}
+
+.crowd {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 50px 10px;
+  padding-top: 50px;
+}
+
+.peer {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 104px;
+}
+
+.peer .av {
+  width: 44px;
+  height: 44px;
+  transition: box-shadow 0.2s, opacity 0.2s;
+}
+
+.peer.done .av {
+  box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--good);
+}
+
+.peer > span:not(.av) {
+  max-width: 100%;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 3;
+  width: max-content;
+  max-width: 112px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--ivory);
+  color: #0a0a10;
+  font-size: 13px;
+  font-weight: 800;
+  font-style: normal;
+  line-height: 1.2;
+  text-align: center;
+  overflow-wrap: anywhere;
+  translate: -50% 0;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
+  animation: bubble 0.25s cubic-bezier(0.2, 1.6, 0.4, 1) both;
+}
+
+.bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 10px;
+  height: 8px;
+  translate: -50% -1px;
+  background: inherit;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+.bubble.ok {
+  background: var(--good);
+  color: #062414;
+}
+
+@keyframes bubble {
+  from {
+    opacity: 0;
+    scale: 0.6;
+    translate: -50% 8px;
+  }
+}
+
 /* ---------- düello ---------- */
 
 .arena {
