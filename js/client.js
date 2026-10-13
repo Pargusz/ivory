@@ -25,6 +25,7 @@ export class ClientSession {
     this.pendingVote = null;
     this.pendingCont = null;
     this.pendingGuess = null;
+    this.pendingBet = null;
     this.gone = false;
   }
 
@@ -86,6 +87,16 @@ export class ClientSession {
     this.send({ t: 'g', r: round, ok, s });
   }
 
+  // Düelloda yanlış tahmin: yalnızca görsel, bir kez gönderilir.
+  miss(round) {
+    this.send({ t: 'g', r: round, ok: 0 });
+  }
+
+  bet(round, k) {
+    this.pendingBet = { r: round, k, at: Date.now() };
+    this.send({ t: 'b', r: round, k });
+  }
+
   react(e) {
     this.send({ t: 'rx', e });
   }
@@ -128,10 +139,19 @@ export class ClientSession {
     if (g) {
       // Takım oyununda tahmin, sıra ya da aşama değişince işlenmiş demektir.
       const moved = rd?.turn !== undefined && (rd.turn !== this.me.id || rd.gs !== g.s);
-      if (!rd || rd.n !== g.r || st.phase !== 'guess' || rd.done?.includes(this.me.id) || moved) this.pendingGuess = null;
+      const live = st.phase === 'guess' || st.phase === 'duel';
+      if (!rd || rd.n !== g.r || !live || rd.done?.includes(this.me.id) || moved) this.pendingGuess = null;
       else if (now - g.at > RESEND_MS) {
         g.at = now;
         this.send({ t: 'g', r: g.r, ok: g.ok, s: g.s });
+      }
+    }
+    const b = this.pendingBet;
+    if (b) {
+      if (!rd || rd.n !== b.r || st.phase !== 'bet' || rd.bets?.[this.me.id] === b.k) this.pendingBet = null;
+      else if (now - b.at > RESEND_MS) {
+        b.at = now;
+        this.send({ t: 'b', r: b.r, k: b.k });
       }
     }
     const c = this.pendingCont;

@@ -18,6 +18,11 @@ const GUESS_MS = 90000;
 const TURN_MS = 30000; // takım oyununda kesit bittikten sonra tahmin için tanınan süre
 const META_WAIT_MS = 6000;
 const FIRST_BONUS = 1;
+const BET_MS = 10000; // düelloda seyircilerin bahis süresi
+const READY_MS = 3500; // seyirci yoksa düello öncesi kısa bekleme
+const DUEL_MS = 30000;
+const DUEL_WIN = 3; // düelloyu kazanan
+const BET_WIN = 2; // kazanana oynayan seyirci
 const RIGHT = 3;
 const WRONG = -1;
 
@@ -27,7 +32,10 @@ export const TIME_OPTIONS = [15, 30, 45, 60];
 // "Şarkıyı bil" modu: şarkının başı 5, 10, 20 saniye dinlenir; ne kadar erken bilinirse o kadar puan.
 export const GUESS_STEPS = [5, 10, 20];
 export const GUESS_PTS = [5, 3, 2];
-// mode: who = kim dinliyor, name = şarkıyı bil. team (yalnızca name modunda): herkes tek takımdır,
+// Düello: iki oyuncu karşı karşıya gelir, şarkıyı ilk bilen kazanır; diğerleri bahis oynar.
+// Kaybedene oynanan her para kazananın olur.
+export const DUEL_SNIP = 20; // düelloda şarkının çaldığı saniye
+// mode: who = kim dinliyor, name = şarkıyı bil, duel = düello. team (yalnızca name modunda): herkes tek takımdır,
 // sırayla tahmin eder; bilemeyen sırayı bir sonrakine, şarkıyı bir sonraki aşamaya geçirir.
 export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true, mode: 'who', team: false };
 
@@ -74,6 +82,7 @@ export class HostGame {
     this.no = 0; // oyun içindeki şarkı sırası
     this.win = null;
     this.ts = 0; // takım puanı
+    this.duels = new Map(); // oyuncu ve eşleşme başına düello sayısı
     this.skips = 0;
     this.cd = 0;
     this.ev = null;
@@ -121,6 +130,7 @@ export class HostGame {
     else if (m.t === 'sv') this.#saved(p);
     else if (m.t === 'rx') this.#react(p, m);
     else if (m.t === 'g') this.#guess(p, m);
+    else if (m.t === 'b') this.#bet(p, m);
     else if (m.t === 'bye') this.#remove(p.id);
   }
 
@@ -223,6 +233,14 @@ export class HostGame {
       }
       if (r.first === old) r.first = newId;
       if (r.order) r.order = swap(r.order);
+      if (r.duel) {
+        r.duel = swap(r.duel);
+        for (const map of [r.bets, r.miss]) {
+          if (!(old in map)) continue;
+          map[newId] = map[old];
+          delete map[old];
+        }
+      }
     }
     this.dirty = true;
   }
@@ -274,6 +292,19 @@ export class HostGame {
   // m.ok: bildi mi; m.s: kaçıncı aşamada (0 = 5 sn). Doğruluğu oyuncunun sayfası denetler.
   #guess(p, m) {
     const r = this.round;
+    if (this.phase === 'duel' && r && m.r === r.n) {
+      // Düello: ilk doğru bilen kazanır; yanlış tahmin "tutukluk" olarak herkese gösterilir.
+      const side = r.duel.indexOf(p.id);
+      if (side < 0) return;
+      if (m.ok) {
+        r.win = side;
+        this.#revealDuel();
+      } else {
+        r.miss[p.id] = (r.miss[p.id] || 0) + 1;
+        this.dirty = true;
+      }
+      return;
+    }
     if (this.phase !== 'guess' || !r || m.r !== r.n) return;
     if (r.order) {
       // Takım oyunu: yalnızca sırası gelen, o aşama için tek tahmin yapar.
@@ -285,6 +316,47 @@ export class HostGame {
     r.res[p.id] = [ok ? 1 : 0, Math.max(0, Math.min(GUESS_STEPS.length - 1, m.s | 0))];
     if (ok && !r.first) r.first = p.id;
     this.dirty = true;
+  }
+
+  // Seyircinin bahsi: süre dolana kadar değiştirilebilir. Düellocular bahis oynayamaz.
+  #bet(p, m) {
+    const r = this.round;
+    if (this.phase !== 'bet' || !r || m.r !== r.n || r.duel.includes(p.id)) return;
+    if (m.k !== 0 && m.k !== 1) return;
+    if (r.bets[p.id] === m.k) return;
+    r.bets[p.id] = m.k;
+    this.dirty = true;
+  }
+
+  // Sıradaki iki düellocu: en az düello yapanlar, kendi aralarında en az karşılaşmış olanlar.
+  // Böylece herkes eşit sıklıkta çıkar ve eşleşmeler sürekli değişir.
+  #pair() {
+    const on = shuffle(this.rot.filter((id) => this.players.get(id)?.on));
+    if (on.length < 2) return null;
+    const count = (id) => this.duels.get(id) || 0;
+    const key = (x, y) => (x < y ? x + '|' + y : y + '|' + x);
+    const met = (x, y) => this.duels.get(key(x, y)) || 0;
+    const a = on.slice().sort((x, y) => count(x) - count(y))[0];
+    const b = on.filter((id) => id !== a).sort((x, y) => count(x) - count(y) || met(a, x) - met(a, y))[0];
+    for (const id of [a, b, key(a, b)]) this.duels.set(id, (this.duels.get(id) || 0) + 1);
+    return Math.random() < 0.5 ? [a, b] : [b, a];
+  }
+
+  #revealDuel() {
+    const r = this.round;
+    r.dl = {};
+    if (r.win >= 0) {
+      const winner = this.players.get(r.duel[r.win]);
+      const bettors = Object.entries(r.bets).filter(([id]) => this.players.has(id));
+      const lost = bettors.filter(([, k]) => k !== r.win).length;
+      // Kaybedene oynanan paralar kazananın olur.
+      if (winner) r.dl[winner.id] = DUEL_WIN + lost;
+      for (const [id, k] of bettors) if (k === r.win) r.dl[id] = BET_WIN;
+      for (const [id, delta] of Object.entries(r.dl)) this.players.get(id).sc += delta;
+    }
+    this.phase = 'reveal';
+    this.dirty = true;
+    if (!this.#leaders().reached) this.#prepare();
   }
 
   // Sırası gelen bildiyse tur biter; bilemediyse (yanlış, pas ya da süre) şarkı bir sonraki
@@ -403,8 +475,8 @@ export class HostGame {
   #startRound() {
     this.#prepare();
     const t = this.next;
-    const name = this.set.mode === 'name';
-    // Şarkıyı bil modunda başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
+    const name = this.set.mode !== 'who';
+    // Şarkıyı bil ve düello modlarında başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
     if (t && name && !t.meta?.name && this.skips < 12) {
       if (t.settled || Date.now() - t.at > META_WAIT_MS) {
         this.skips++;
@@ -434,6 +506,19 @@ export class HostGame {
       cont: [],
       dl: null,
     };
+    if (this.set.mode === 'duel') {
+      const duel = this.#pair();
+      if (!duel) {
+        this.round = null;
+        this.#finish(true);
+        return;
+      }
+      const watchers = [...this.players.values()].some((p) => p.on && !duel.includes(p.id));
+      Object.assign(this.round, { duel, bets: {}, miss: {}, win: null, bt1: t0 + (watchers ? BET_MS : READY_MS) });
+      this.phase = 'bet';
+      this.dirty = true;
+      return;
+    }
     if (name) {
       Object.assign(this.round, { t1: t0 + GUESS_MS, res: {}, first: null });
       if (this.#teams()) {
@@ -572,7 +657,7 @@ export class HostGame {
     if (!WIN_OPTIONS.includes(s.win) || !TIME_OPTIONS.includes(s.time)) return;
     s.mid = !!s.mid;
     s.ex = !!s.ex;
-    s.mode = s.mode === 'name' ? 'name' : 'who';
+    s.mode = ['who', 'name', 'duel'].includes(s.mode) ? s.mode : 'who';
     s.team = !!s.team;
     this.set = s;
     this.dirty = true;
@@ -589,6 +674,7 @@ export class HostGame {
 
   canStart() {
     if ([...this.players.values()].filter((p) => p.on).length < this.min) return { ok: false, why: `En az ${this.min} oyuncu gerekli` };
+    if (this.set.mode === 'duel' && [...this.players.values()].filter((p) => p.on).length < 2) return { ok: false, why: 'Düello için en az 2 oyuncu gerekli' };
     if (!this.songCount()) return { ok: false, why: 'Seçili kaynaklarda hiç şarkı yok' };
     return { ok: true };
   }
@@ -599,6 +685,7 @@ export class HostGame {
     this.used.clear();
     this.know = {};
     this.ts = 0;
+    this.duels = new Map();
     this.skips = 0;
     this.round = null;
     this.next = null;
@@ -651,6 +738,22 @@ export class HostGame {
       if (now >= this.cd) this.#startRound();
     } else if (this.phase === 'vote') {
       if (active.every((p) => r.votes[p.id]) || now >= r.t1 + VOTE_GRACE_MS) this.#reveal();
+    } else if (this.phase === 'bet') {
+      const watchers = active.filter((p) => !r.duel.includes(p.id));
+      // Herkes bahsini koyduysa süre beklenmez; yine de son bir nefeslik pay kalır.
+      if (watchers.length && watchers.every((p) => r.bets[p.id] != null)) r.bt1 = Math.min(r.bt1, now + 2000);
+      if (now >= r.bt1) {
+        r.t0 = now + 300;
+        r.t1 = r.t0 + DUEL_MS;
+        this.phase = 'duel';
+        this.dirty = true;
+      }
+    } else if (this.phase === 'duel') {
+      // Süre dolarsa ya da düelloculardan biri koparsa berabere biter.
+      if (now >= r.t1 + VOTE_GRACE_MS || r.duel.some((id) => !this.players.get(id)?.on)) {
+        r.win = -1;
+        this.#revealDuel();
+      }
     } else if (this.phase === 'guess' && r.order) {
       // Sırası gelen koptuysa sıra aşama harcamadan geçer; süresi dolduysa bilemedi sayılır.
       if (!this.players.get(r.order[r.at])?.on) {
@@ -705,12 +808,14 @@ export class HostGame {
     };
     if (this.phase === 'countdown') st.cd = this.cd;
     if (this.#teams()) st.ts = this.ts;
-    if (r && (this.phase === 'vote' || this.phase === 'guess' || this.phase === 'reveal')) {
+    if (r && ['vote', 'guess', 'bet', 'duel', 'reveal'].includes(this.phase)) {
       st.rd = { n: r.n, no: r.no, id: r.id, meta: r.meta, pos: r.pos, t0: r.t0, t1: r.t1, voted: Object.keys(r.votes) };
       if (r.res) st.rd.done = Object.keys(r.res);
       if (r.order && this.phase === 'guess') Object.assign(st.rd, { turn: r.order[r.at], gs: r.stage, t1: r.gt1 });
       if (this.phase === 'reveal') Object.assign(st.rd, { ls: r.ls, vt: r.votes, dl: r.dl, cont: r.cont });
       if (this.phase === 'reveal' && r.res) Object.assign(st.rd, { res: r.res, first: r.first, td: r.td });
+      if (r.duel) Object.assign(st.rd, { duel: r.duel, bets: r.bets, miss: r.miss, bt1: r.bt1 });
+      if (r.duel && this.phase === 'reveal') st.rd.win = r.win;
     }
     if (this.phase === 'won') st.win = this.win;
     if (this.ev) st.ev = { id: this.ev.id, k: this.ev.k, who: this.ev.who };
@@ -761,6 +866,6 @@ export class HostGame {
     this.cd = s.cd || 0;
     this.know = s.know || {};
     this.ts = Number(s.ts) || 0;
-    if ((this.phase === 'vote' || this.phase === 'guess' || this.phase === 'reveal') && !this.round) this.phase = 'lobby';
+    if (['vote', 'guess', 'bet', 'duel', 'reveal'].includes(this.phase) && !this.round) this.phase = 'lobby';
   }
 }
