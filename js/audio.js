@@ -80,6 +80,9 @@ export class Playback {
     this.loadedAt = 0;
     this.onDevice = false;
     this.warm = false; // son tur cihazda sorunsuz çaldı mı
+    this.live = false; // gömülü oynatıcı bu şarkıyı çalmaya başladı mı
+    this.ctrlUri = '';
+    this.kicking = 0;
     this.via = null; // şarkı şu an nerede çalıyor: local | embed | device
     this.volume = clamp01(ls.get('vol', 0.5));
     this.devVolume = null; // seçili cihazın ses düzeyi; cihaz ses ayarını desteklemiyorsa null
@@ -401,14 +404,23 @@ export class Playback {
     const uri = 'spotify:track:' + track.id;
     this.wantSeek = track.pos > 0 ? Math.floor(track.pos / 1000) : null;
     this.loadedAt = Date.now();
+    this.live = false;
     if (this.ctrl && this.ctrlHost === host && host.querySelector('iframe')) {
-      this.ctrl.loadUri(uri);
-      this.#kick(tk);
+      if (this.ctrlUri === uri && typeof this.ctrl.restart === 'function') {
+        // Aynı şarkı (kesiti yeniden dinleme, sonraki aşama): yeniden yüklemeden baştan çal.
+        this.ctrl.restart();
+        this.#kick(tk, true);
+      } else {
+        this.ctrlUri = uri;
+        this.ctrl.loadUri(uri);
+        this.#kick(tk);
+      }
       return;
     }
     host.innerHTML = '<div></div>';
     this.ctrl = null;
     this.ctrlHost = host;
+    this.ctrlUri = uri;
     api.createController(host.firstChild, { uri, width: '100%', height: 80 }, (ctrl) => {
       this.ctrl = ctrl;
       ctrl.addListener('ready', () => this.#kick(this.token));
@@ -416,24 +428,28 @@ export class Playback {
     });
   }
 
-  // Tarayıcı otomatik çalmayı geciktirebilir; kısa aralıklarla birkaç kez dener.
-  async #kick(tk) {
-    for (const wait of [0, 250, 350, 500, 800, 1400, 2500]) {
+  // Gömülü oynatıcıyı başlatır. play() çalmakta olan şarkıyı baştan başlattığı için yalnızca
+  // şarkı hiç başlamadıysa (tarayıcı otomatik çalmayı geciktirdiyse) yinelenir.
+  async #kick(tk, started = false) {
+    if (this.kicking === tk) return;
+    this.kicking = tk;
+    for (const wait of started ? [2500, 3000] : [0, 2500, 3000]) {
       await sleep(wait);
-      if (tk !== this.token || !this.ctrl || this.status === 'playing' || this.status === 'ended') return;
+      if (tk !== this.token || !this.ctrl || this.live || this.status === 'ended') return;
       try {
         this.ctrl.play();
       } catch {}
     }
-    await sleep(1500);
-    if (tk === this.token && this.status !== 'playing' && this.status !== 'ended') this.#set('blocked');
+    await sleep(3000);
+    if (tk === this.token && !this.live && this.status !== 'ended') this.#set('blocked');
   }
 
   #update(data) {
     if (!data || !this.cur) return;
     // Yeni şarkı yüklenirken bir önceki şarkıya ait gecikmiş bildirimleri sayma.
-    const stale = data.playingURI && data.playingURI !== 'spotify:track:' + this.cur.id && Date.now() - this.loadedAt < 1500;
+    const stale = data.playingURI && data.playingURI !== 'spotify:track:' + this.cur.id && Date.now() - this.loadedAt < 4000;
     if (stale) return;
+    if (!data.isPaused) this.live = true;
     const playing = !data.isPaused && !data.isBuffering;
     if (playing && this.wantSeek != null && data.duration > 0) {
       // 30 saniyelik önizlemede ortaya sarmanın anlamı yok; yalnızca tam şarkıda sar.
@@ -445,7 +461,10 @@ export class Playback {
         } catch {}
       }
     }
-    if (playing && this.cur.limit && this.status !== 'ended' && !this.limitTimer) {
+    // Yeniden başlatmanın hemen ardından eski konum gelebilir; kesit süresini ona göre kurma.
+    // Süre, ses gerçekten ilerlemeye başlayınca (konum > 0) kurulur ki kesit kısa kalmasın.
+    const sane = data.position > 0 && data.position <= Date.now() - this.loadedAt + 1500;
+    if (playing && sane && this.cur.limit && this.status !== 'ended' && !this.limitTimer) {
       this.#endAfter(this.token, this.cur.limit - data.position, () => this.#pauseEmbed());
     }
     if (this.status === 'ended') return;
