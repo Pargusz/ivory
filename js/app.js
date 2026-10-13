@@ -270,7 +270,10 @@ function enterRoom(session) {
   app.st = null;
   app.view = 'room';
   app.joinAt = Date.now();
+  // Önceki odadan kalan "oy verdim / devam dedim" işaretleri yeni odada aynı numaralı turu kilitlemesin.
   resetRound(0);
+  app.voteSent = app.contSent = app.savedRound = app.playedRound = 0;
+  app.seenEv = null;
   ss.set('room', { code: session.code, host: session.host });
   history.replaceState(null, '', '#' + session.code);
   session.chan.open().then(update);
@@ -370,7 +373,7 @@ function resetRound(n) {
 function applyState(st) {
   app.st = st;
   const rd = st.rd;
-  if (rd && rd.n !== app.round) resetRound(rd.n);
+  if (rd && rid(st) !== app.round) resetRound(rid(st));
   // Tahmin aşamasında şarkının kesiti, diğerlerinde tamamı çalar.
   // Takım oyununda aşama herkes için ortaktır; aşama değişince yeni kesit çalar.
   const want = !rd ? 0 : st.phase === 'guess' ? `g${rd.n}:${rd.gs ?? ''}` : st.phase === 'vote' || st.phase === 'reveal' ? rd.n : 0;
@@ -421,8 +424,10 @@ function flyReaction(p, emoji) {
 
 const reactBar = () => `<div class="reacts" data-key="reacts">${REACTIONS.map((e, i) => `<button data-act="react" data-e="${i}" aria-label="Tepki ${e}">${e}</button>`).join('')}</div>`;
 
-const hasVoted = (st) => app.voteSent === st.rd.n || st.rd.voted.includes(me.id);
-const hasContinued = (st) => app.contSent === st.rd.n || st.rd.cont.includes(me.id);
+// Turun kimliği: tur numaraları her odada 1'den başladığı için oyunun kimliğiyle birlikte tutulur.
+const rid = (st) => st.inst + ':' + st.rd.n;
+const hasVoted = (st) => app.voteSent === rid(st) || st.rd.voted.includes(me.id);
+const hasContinued = (st) => app.contSent === rid(st) || st.rd.cont.includes(me.id);
 
 function sendToCore(msg) {
   if (isHost()) app.s.core.handle({ ...msg, f: me.id });
@@ -505,7 +510,7 @@ function submitVote(force) {
   const known = new Set(st.pl.map((p) => p.id));
   const ballot = [...app.ballot].filter((id) => known.has(id));
   if (!ballot.length && !force) return toast('Önce bir ya da birkaç oyuncu seç');
-  app.voteSent = st.rd.n;
+  app.voteSent = rid(st);
   sendToCore({ t: 'v', r: st.rd.n, b: ballot });
   update();
 }
@@ -659,7 +664,7 @@ const actions = {
   cont: () => {
     const st = app.st;
     if (st?.phase !== 'reveal' || hasContinued(st)) return;
-    app.contSent = st.rd.n;
+    app.contSent = rid(st);
     sendToCore({ t: 'c', r: st.rd.n });
     update();
   },
@@ -715,12 +720,12 @@ const actions = {
   lobby: () => app.s.core.toLobby(),
   save: async () => {
     const rd = app.st?.rd;
-    if (!rd || app.saving || app.savedRound === rd.n) return;
+    if (!rd || app.saving || app.savedRound === rid(app.st)) return;
     app.saving = true;
     update();
     try {
       const list = await spotify.saveTrack(rd.id);
-      app.savedRound = rd.n;
+      app.savedRound = rid(app.st);
       toast(`“${list}” listene eklendi`, 'good');
       sendToCore({ t: 'sv' });
     } catch (e) {
@@ -1174,7 +1179,8 @@ function wheelView(st, { reveal, locked, mine, listeners }) {
 // "şarkıyı bil" turunda şarkının adını ve kapağını göstermesin.
 function audioView(rd, m, secret = false) {
   const demo = isDemo(rd.id);
-  const embedOn = !demo && playback.via !== 'local' && (playback.mode !== 'none' || !m);
+  // Kutu yalnızca şarkı gerçekten gömülü oynatıcıda çalarken görünür; yoksa boş bir kutu kalır.
+  const embedOn = !demo && playback.via === 'embed' && playback.mode !== 'none';
   // Ses ayarlı sekme oynatıcısı yerine gömülü oynatıcıya düşüldüyse nedenini söyle.
   let noVol = '';
   if (embedOn && playback.via === 'embed' && spotify.authed()) {
@@ -1215,7 +1221,7 @@ function playView(st) {
   const mine = new Set(reveal ? rd.vt?.[me.id] || [] : app.ballot);
   const demo = isDemo(rd.id);
   const canSave = !demo && spotify.authed();
-  const saved = app.savedRound === rd.n;
+  const saved = app.savedRound === rid(app.st);
 
   let heading = 'Bu şarkı kimlerin listesinde?';
   let sub = 'Dilimlere dokunarak seç · birden fazla olabilir · doğru <b class="up">+3</b> · yanlış <b class="down">−1</b>';
@@ -1274,7 +1280,7 @@ function playView(st) {
 
 function saveButton(rd) {
   if (isDemo(rd.id) || !spotify.authed()) return '';
-  const saved = app.savedRound === rd.n;
+  const saved = app.savedRound === rid(app.st);
   return `<button class="btn sm ghost" data-act="save" ${saved || app.saving ? 'disabled' : ''}>${icon(saved ? 'check' : 'plus')} ${saved ? 'Listene eklendi' : 'Listeme ekle'}</button>`;
 }
 
