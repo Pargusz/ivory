@@ -16,4 +16,11 @@ window.IVORY_CONFIG = {
 
   // "Listeme ekle" düğmesinin şarkıları kaydettiği çalma listesinin adı.
   playlistName: 'Ivory',
+
+  // Şarkı listelerinin yedeği (Firebase Realtime Database). Boş bırakılırsa yedek tutulmaz.
+  // Bu değerler gizli değildir; erişimi veritabanının güvenlik kuralları belirler.
+  firebase: {
+    apiKey: 'AIzaSyA3-i2y7eEm-xNncNrndt2Yc_ysfiWUQZA',
+    databaseURL: 'https://ivory-8b5b1-default-rtdb.firebaseio.com',
+  },
 };

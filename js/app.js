@@ -177,7 +177,7 @@ function tryNextGroup() {
     return false;
   }
   ss.set('tried', [...tried]);
-  spotify.logout();
+  spotify.logout(false);
   spotify.login(next, { intent: app.intent, name: me.name });
   return true;
 }
@@ -702,6 +702,14 @@ const actions = {
     ss.del('tried');
     spotify.login(spotify.group(), { intent: app.intent, name: me.name });
   },
+  // Oyuncunun yedekteki ve tarayıcıdaki şarkı listesini siler.
+  forget: async () => {
+    const ok = await spotify.forgetLibrary();
+    ss.del('lib');
+    app.spot = null;
+    toast(ok ? 'Kayıtlı şarkı listen silindi' : 'Tarayıcıdaki kayıt silindi; yedeğe ulaşılamadı', ok ? 'good' : '');
+    update();
+  },
   reload: () => {
     ss.del('tried');
     app.spot = null;
@@ -1007,7 +1015,7 @@ function spotifyBody() {
     const warn = app.spot.warn?.length ? `<p class="note">Okunamayan kaynak: ${esc(app.spot.warn.join(', '))}</p>` : '';
     const limited = app.spot.limited ? `<p class="note">Spotify şu an yeni istek kabul etmiyor; kayıtlı şarkı listenle oynayabilirsin. Şarkılar sayfadaki oynatıcıdan çalar.</p>` : '';
     return `<div class="ready">${icon('check')}<div><b>${app.spot.tracks.length} şarkı hazır</b><span>${esc(app.spot.user?.name || '')} · ${sourceCount(app.spot.tracks)}</span></div></div>${warn}${limited}
-      <div class="mini-actions"><button class="link" data-act="reload">Şarkıları yenile</button><button class="link" data-act="logout">Hesabı değiştir</button></div>
+      <div class="mini-actions"><button class="link" data-act="reload">Şarkıları yenile</button><button class="link" data-act="logout">Hesabı değiştir</button>${spotify.cloudOn() ? '<button class="link" data-act="forget">Kayıtlı listemi sil</button>' : ''}</div>
       <div class="where">
         <h4>Spotify nerede açık?</h4>
         ${devicePicker()}
@@ -1015,7 +1023,9 @@ function spotifyBody() {
   }
   return `
     <button class="btn spotify" data-act="connect">Spotify ile bağlan</button>
-    <p class="note">Sık dinlediklerin, oluşturduğun listeler ve kayıtlı albümlerin okunur. Şarkı listen yalnızca bu oyun için odadaki host'a gider; hiçbir sunucuda saklanmaz.</p>`;
+    <p class="note">Sık dinlediklerin, oluşturduğun listeler ve kayıtlı albümlerin okunur. Şarkı listen yalnızca bu oyun için odadaki host'a gider${
+      spotify.cloudOn() ? ' ve her girişte yeniden okunmasın diye site sahibinin veritabanında yedeklenir; istediğin an “Kayıtlı listemi sil” ile silebilirsin.' : '; hiçbir sunucuda saklanmaz.'
+    }</p>`;
 }
 
 function prepView() {

@@ -3,6 +3,7 @@
 
 import { ls, ss, uid, sleep, shuffle, skipSong } from './util.js';
 import { FL, PL, AL, EX, MAX_TRACKS, makeTrack } from './lib.js';
+import * as cloud from './cloud.js';
 
 const AUTH_URL = 'https://accounts.spotify.com/authorize';
 const TOKEN_URL = 'https://accounts.spotify.com/api/token';
@@ -61,10 +62,13 @@ export function redirectUri() {
   return location.origin + location.pathname.replace(/[^/]*$/, '');
 }
 
-export function logout() {
+// forget: hesabı gerçekten değiştiriyorsa bu tarayıcıda kimin oynadığı da unutulur (yedeği
+// başkasına vermemek için). Uygulamalar arası geçişte unutulmaz.
+export function logout(forget = true) {
   auth = null;
   ownPlaylists = null;
   ls.del('auth');
+  if (forget) ls.del('who');
 }
 
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -324,26 +328,65 @@ function fromKept(kept, limited) {
     auth.user = kept.user || { id: kept.uid, name: '' };
     ls.set('auth', auth);
   }
-  return { user: auth.user, tracks: kept.tracks, warn: [], kept: kept.at, limited };
+  if (auth.user?.id && auth.user.id !== 'tab') ls.set('who', auth.user);
+  return { user: auth.user, tracks: kept.tracks, warn: [], kept: kept.at, limited, cloud: !!kept.cloud };
 }
 
+// Buluttaki yedek (varsa) yerel kayda da alınır.
+async function fromCloud(uid) {
+  const got = await cloud.loadLib(uid);
+  if (!got) return null;
+  const kept = { v: CACHE_V, uid, user: got.user, at: got.at, tracks: got.tracks, cloud: true };
+  ls.set('libcache', kept);
+  return kept;
+}
+
+// Sıra: bu tarayıcıdaki kayıt → buluttaki yedek → Spotify. Spotify'a ancak ikisi de yoksa ya da
+// "Şarkıları yenile" (force) dendiyse gidilir; Spotify reddederse yine kayda/yedeğe dönülür.
 export async function loadLibrary(progress = () => {}, force = false) {
   const kept = keptLibrary();
-  if (!force && kept && kept.uid === auth?.user?.id && Date.now() - kept.at < CACHE_MS) return fromKept(kept, false);
+  const fresh = (k) => k && Date.now() - k.at < CACHE_MS;
+  // Yeniden giriş yapılmış olsa da bu tarayıcıda en son kimin oynadığı hatırlanır.
+  const who = auth?.user?.id || ls.get('who')?.id;
+  if (!force && fresh(kept) && kept.uid === who) return fromKept(kept, false);
+  let backup = null;
+  if (!force && who) {
+    progress({ label: 'Yedek', count: 0 });
+    backup = await fromCloud(who);
+    if (fresh(backup)) return fromKept(backup, false);
+  }
   try {
     return await readLibrary(progress, kept, force);
   } catch (e) {
-    if (e.status === 429 && kept) return fromKept(kept, true);
+    if (e.status !== 429) throw e;
+    backup ||= who ? await fromCloud(who) : null;
+    const best = backup && (!kept || backup.at >= kept.at) ? backup : kept;
+    if (best) return fromKept(best, true);
     throw e;
   }
 }
+
+// Bu oyuncunun buluttaki ve tarayıcıdaki kayıtlı listesini siler.
+export async function forgetLibrary() {
+  const who = auth?.user?.id || ls.get('who')?.id;
+  ls.del('libcache');
+  return who ? cloud.dropLib(who) : false;
+}
+
+export const cloudOn = () => cloud.enabled();
 
 async function readLibrary(progress, kept, force) {
   const me = await api('/me');
   auth.user = { id: me.id, name: me.display_name || me.id };
   ls.set('auth', auth);
-  // Yeniden giriş yapıldıysa kim olduğu ancak şimdi belli olur; kayıtlı liste onunsa yeniden okuma.
-  if (!force && kept && kept.uid === me.id && Date.now() - kept.at < CACHE_MS) return fromKept(kept, false);
+  ls.set('who', auth.user);
+  // Yeniden giriş yapıldıysa kim olduğu ancak şimdi belli olur; kayıtlı liste ya da yedek onunsa
+  // yeniden okuma.
+  if (!force) {
+    if (kept && kept.uid === me.id && Date.now() - kept.at < CACHE_MS) return fromKept(kept, false);
+    const backup = await fromCloud(me.id);
+    if (backup && Date.now() - backup.at < CACHE_MS) return fromKept(backup, false);
+  }
 
   const map = new Map();
   const warn = [];
@@ -425,7 +468,11 @@ async function readLibrary(progress, kept, force) {
   }
   // Okuma yarıda kesildiyse (kota) ve elde daha dolu bir kayıt varsa o kullanılır; yarım liste saklanmaz.
   if (warn.length && kept && kept.uid === auth.user.id && kept.tracks.length >= tracks.length) return fromKept(kept, blockedFor() > 0);
-  if (!warn.length && tracks.length) ls.set('libcache', { v: CACHE_V, uid: auth.user.id, user: auth.user, at: Date.now(), tracks });
+  if (!warn.length && tracks.length) {
+    ls.set('libcache', { v: CACHE_V, uid: auth.user.id, user: auth.user, at: Date.now(), tracks });
+    // Yedekleme arkada yapılır; başarısız olsa da oyun etkilenmez.
+    cloud.saveLib(auth.user, tracks);
+  }
   return { user: auth.user, tracks, warn };
 }
 
