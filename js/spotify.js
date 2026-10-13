@@ -65,6 +65,7 @@ export function logout() {
   auth = null;
   ownPlaylists = null;
   ls.del('auth');
+  ls.del('libcache');
 }
 
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -159,9 +160,45 @@ export async function accessToken() {
   return auth.access;
 }
 
+// Spotify, bir uygulamadan (Client ID) kısa sürede çok istek gelince hepsini 429 ile reddeder ve
+// ısrar edildikçe cezayı uzatır. Ne kadar bekleneceğini tarayıcıya söylemez (Retry-After başlığı
+// okunamıyor). Bu yüzden: istekler seyreltilir, 429 gelince durulur ve bir süre hiç istek atılmaz.
+const GAP_MS = 110; // iki isteğin başlangıcı arasındaki en kısa süre
+const BLOCK_STEPS = [60, 120, 300, 600, 900]; // art arda engellenmede bekleme (saniye)
+let nextSlot = 0;
+let rate = ls.get('rate', { until: 0, level: 0 });
+
+async function pace() {
+  const now = Date.now();
+  const at = Math.max(now, nextSlot);
+  nextSlot = at + GAP_MS;
+  if (at > now) await sleep(at - now);
+}
+
+// Spotify bu siteyi şu an engelliyorsa kaç saniye sonra yeniden denenebileceği; yoksa 0.
+export const blockedFor = () => Math.max(0, Math.ceil((rate.until - Date.now()) / 1000));
+
+function tooMany() {
+  rate = { until: Date.now() + BLOCK_STEPS[Math.min(rate.level, BLOCK_STEPS.length - 1)] * 1000, level: rate.level + 1, at: Date.now() };
+  ls.set('rate', rate);
+}
+
+function rateOk() {
+  // Bir süredir sorunsuz gidiyorsa ceza basamağı sıfırlanır.
+  if (rate.level && Date.now() - (rate.at || 0) > 20 * 60000) {
+    rate = { until: 0, level: 0 };
+    ls.del('rate');
+  }
+}
+
+const rateError = () => new SpotifyError(429, 'Spotify çok fazla istek aldı', 'RATE');
+
 async function api(path, { method = 'GET', body, attempt = 0 } = {}) {
   if (!auth) throw new SpotifyError(401, 'Spotify bağlı değil');
+  if (blockedFor()) throw rateError();
   if (Date.now() > auth.exp - 60000) await refresh();
+  await pace();
+  if (blockedFor()) throw rateError();
   const res = await fetch(path.startsWith('http') ? path : API + path, {
     method,
     headers: { Authorization: 'Bearer ' + auth.access, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -171,11 +208,16 @@ async function api(path, { method = 'GET', body, attempt = 0 } = {}) {
     await refresh();
     return api(path, { method, body, attempt: attempt + 1 });
   }
-  if (res.status === 429 && attempt < 4) {
-    const wait = Math.min(Number(res.headers.get('Retry-After')) || 2, 20);
-    await sleep(wait * 1000 + 300);
-    return api(path, { method, body, attempt: attempt + 1 });
+  if (res.status === 429) {
+    // Bir kez, biraz bekleyip yeniden dene; yine reddedilirse ısrar etme.
+    if (attempt < 1 && !blockedFor()) {
+      await sleep(2500);
+      return api(path, { method, body, attempt: attempt + 1 });
+    }
+    if (!blockedFor()) tooMany();
+    throw rateError();
   }
+  rateOk();
   const text = await res.text();
   let data = null;
   try {
@@ -247,7 +289,16 @@ async function playlistItems(id, each) {
 
 // Sitenin üç kaynağını okur: sık dinlenenler, oluşturduğu listeler, kayıtlı albümler.
 // Bir kaynak hata verirse diğerleri yine yüklenir; hata `warn` içinde döner.
-export async function loadLibrary(progress = () => {}) {
+// Okunan kütüphane tarayıcıda bir gün saklanır: siteye her girişte yüzlerce istek atılmaz.
+// "Şarkıları yenile" (force) Spotify'dan yeniden okur.
+const CACHE_MS = 24 * 3600 * 1000;
+const CACHE_V = 3;
+
+export async function loadLibrary(progress = () => {}, force = false) {
+  const kept = ls.get('libcache');
+  if (!force && kept?.v === CACHE_V && kept.idx === auth?.idx && kept.uid && kept.uid === auth?.user?.id && Date.now() - kept.at < CACHE_MS && kept.tracks?.length) {
+    return { user: auth.user, tracks: kept.tracks, warn: [], kept: kept.at };
+  }
   const me = await api('/me');
   auth.user = { id: me.id, name: me.display_name || me.id };
   ls.set('auth', auth);
@@ -330,6 +381,8 @@ export async function loadLibrary(progress = () => {}) {
     const rest = shuffle(tracks.filter((t) => !(t.f & FL)));
     tracks = top.concat(rest).slice(0, MAX_TRACKS);
   }
+  // Yarım okunan kütüphane saklanmaz.
+  if (!warn.length && tracks.length) ls.set('libcache', { v: CACHE_V, idx: auth.idx, uid: auth.user.id, at: Date.now(), tracks });
   return { user: auth.user, tracks, warn };
 }
 

@@ -134,7 +134,7 @@ function setLib(mode, tracks, extra = {}) {
   ss.set('lib', { mode, tracks });
 }
 
-async function loadSpotify() {
+async function loadSpotify(force = false) {
   if (app.busy) return;
   app.busy = { label: 'Spotify', count: 0 };
   app.libErr = null;
@@ -143,7 +143,7 @@ async function loadSpotify() {
     const res = await spotify.loadLibrary((p) => {
       app.busy = p;
       update();
-    });
+    }, force);
     app.spot = res;
     ss.del('tried');
     refreshDevices(true);
@@ -154,6 +154,7 @@ async function loadSpotify() {
       if (tryNextGroup()) return; // sıradaki Spotify uygulamasına yönleniyor
       app.libErr = { kind: 'unreg' };
     } else if (e.status === 401) app.libErr = { kind: 'auth' };
+    else if (e.status === 429) app.libErr = { kind: 'rate' };
     else app.libErr = { kind: 'other', text: e.message };
   }
   app.busy = null;
@@ -508,7 +509,8 @@ function suggest(text) {
   }
   g.sug = mine;
   update();
-  if (!spotify.authed()) return;
+  // Spotify araması her tuşta değil, yazma durunca yapılır (istek sayısını düşük tutmak için).
+  if (!spotify.authed() || q.length < 3) return;
   sugTimer = setTimeout(async () => {
     const found = await spotify.search(q).catch(() => []);
     if (app.g !== g || g.text.trim() !== q) return;
@@ -516,7 +518,7 @@ function suggest(text) {
     for (const t of found) add(list, t);
     g.sug = list;
     update();
-  }, 250);
+  }, 450);
 }
 
 // Yazılan tahmin bu turun şarkısı mı? Listeden seçildiyse sanatçı da tutmalı: aynı adlı başka
@@ -570,7 +572,7 @@ function suggestArtists(q, key, g) {
   }
   g.sug = mine;
   update();
-  if (!spotify.authed()) return;
+  if (!spotify.authed() || q.length < 3) return;
   sugTimer = setTimeout(async () => {
     const found = await spotify.searchArtists(q).catch(() => []);
     if (app.g !== g || g.text.trim() !== q) return;
@@ -578,7 +580,7 @@ function suggestArtists(q, key, g) {
     for (const name of found) add(list, name);
     g.sug = list;
     update();
-  }, 250);
+  }, 450);
 }
 
 // Takım oyununda sırası gelenin yanıtı: bildi ya da bilemedi (yanlış tahmin, pas).
@@ -691,7 +693,7 @@ const actions = {
   reload: () => {
     ss.del('tried');
     app.spot = null;
-    loadSpotify();
+    loadSpotify(true);
   },
   'send-mail': async () => {
     const mail = app.mail.trim();
@@ -978,6 +980,12 @@ function spotifyBody() {
           <button class="btn sm" data-act="reload">Eklendim, tekrar dene</button>
           <button class="link" data-act="logout">Başka hesapla dene</button>
         </div>`;
+    }
+    if (app.libErr.kind === 'rate') {
+      const wait = spotify.blockedFor();
+      return `<p class="note bad">Spotify şu an bu siteden gelen istekleri sınırlıyor (kısa sürede çok fazla istek geldi). ${wait ? `Yaklaşık <b>${wait >= 90 ? Math.ceil(wait / 60) + ' dakika' : wait + ' saniye'}</b> sonra yeniden dene.` : 'Biraz bekleyip yeniden dene.'}</p>
+      <p class="note">Ne kadar süreceğini Spotify bildirmiyor; art arda denemek süreyi uzatır.</p>
+      <div class="mini-actions"><button class="btn sm" data-act="reload" ${wait ? 'disabled' : ''}>Tekrar dene</button></div>`;
     }
     return `<p class="note bad">${app.libErr.kind === 'auth' ? 'Spotify oturumu sona erdi.' : 'Şarkılar okunamadı: ' + esc(app.libErr.text || '')}</p>
       <div class="mini-actions"><button class="btn sm" data-act="${app.libErr.kind === 'auth' ? 'connect' : 'reload'}">Tekrar dene</button></div>`;
@@ -2153,6 +2161,8 @@ onTick((now) => {
     app.toasts = app.toasts.filter((t) => t.until >= now);
     update();
   }
+  // Spotify sınırlaması ekranındaki geri sayım aksın.
+  if (!app.s && app.libErr?.kind === 'rate') update();
   if (!app.s) return;
   if (!st) return update();
   if (st.phase === 'vote' && !hasVoted(st) && hnow() >= st.rd.t1) submitVote(true);

@@ -498,6 +498,9 @@ export class Playback {
         this.localWhy = '';
         return true;
       } catch (e) {
+        // Spotify istekleri geçici olarak sınırlıyorsa oynatıcıyı kusurlu sayma; bu şarkı gömülü
+        // oynatıcıda çalar, sınır kalkınca sekme içi oynatıcıya dönülür.
+        if (e.status === 429) return false;
         why = (e.reason === 'PREMIUM_REQUIRED' ? 'Spotify Premium gerekli' : e.message) + ' (' + e.status + ')';
         if (e.status === 401 || e.status === 403) break;
         // Spotify oynatıcıyı bu kimlikle tanımıyor: gerçek kimliği cihaz listesinden bul.
