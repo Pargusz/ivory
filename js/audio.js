@@ -80,7 +80,8 @@ export class Playback {
     this.embedded = false; // gömülü oynatıcı ekranda mı
     this.ctrl = null;
     this.ctrlHost = null;
-    this.wantSeek = null;
+    this.wantStart = 0; // gömülü oynatıcıda şarkının başlaması istenen saniye
+    this.ctrlStart = 0; // oynatıcıya şarkı hangi başlangıçla yüklendi
     this.loadedAt = 0;
     this.onDevice = false;
     this.warm = false; // son tur cihazda sorunsuz çaldı mı
@@ -268,7 +269,10 @@ export class Playback {
   }
 
   // track: { id, pos, limit, secret }. limit verilirse şarkı o kadar milisaniye çalıp durur.
-  // secret: şarkı seçili Spotify cihazında çalmaz (orada adı ekranda görünür); bu sekmede çalar.
+  // secret: şarkının adı oyuncunun Spotify uygulamasında görünmemeli. Spotify hesabına bağlı
+  // oynatıcılarda (seçili cihaz, sekme içi oynatıcı) çalan şarkı uygulamada "şu an çalıyor"
+  // diye görünür; gömülü oynatıcıda çalan görünmez. Bu yüzden gizli şarkı yalnızca gömülü
+  // oynatıcıda çalar (orada ses düzeyi ayarlanamaz).
   async play(track) {
     const tk = ++this.token;
     this.cur = track;
@@ -292,6 +296,10 @@ export class Playback {
       return;
     }
     if (track.secret) {
+      if (this.via === 'local' && this.local) {
+        this.local.pause().catch(() => {});
+        this.#ensureQuiet(tk);
+      }
       if (this.onDevice) {
         this.onDevice = false;
         spotify.pause(this.device).catch(() => {});
@@ -309,7 +317,7 @@ export class Playback {
       }
       this.notify('Spotify cihazında açılamadı — şarkı bu sekmede çalıyor');
     }
-    const ok = await this.#onLocal(track, tk);
+    const ok = !track.secret && (await this.#onLocal(track, tk));
     if (tk !== this.token) return;
     if (ok) {
       this.#pauseEmbed();
@@ -530,18 +538,25 @@ export class Playback {
     if (tk !== this.token || !host) return;
 
     const uri = 'spotify:track:' + track.id;
-    this.wantSeek = track.pos > 0 ? Math.floor(track.pos / 1000) : null;
+    // Şarkı ortadan başlayacaksa oynatıcıya yüklenirken söylenir: çalmaya başladıktan sonra
+    // sarmak (seek) tam şarkıda tutmuyor.
+    const start = track.pos > 0 ? Math.floor(track.pos / 1000) : 0;
     this.loadedAt = Date.now();
     this.live = false;
-    this.seeked = 0;
+    this.wantStart = start;
+    this.seeked = start * 1000;
+    this.seekAt = this.loadedAt;
     if (this.ctrl && this.ctrlHost === host && host.querySelector('iframe')) {
-      if (this.ctrlUri === uri && typeof this.ctrl.restart === 'function') {
-        // Aynı şarkı (kesiti yeniden dinleme, sonraki aşama): yeniden yüklemeden baştan çal.
-        this.ctrl.restart();
+      if (this.ctrlUri === uri && this.ctrlStart === start) {
+        // Aynı şarkı, aynı yer (kesiti yeniden dinleme, sonraki aşama): yeniden yüklemeden çal.
+        // play() yüklenirken verilen başlangıca, restart() şarkının başına döner.
+        if (start || typeof this.ctrl.restart !== 'function') this.ctrl.play();
+        else this.ctrl.restart();
         this.#kick(tk, true);
       } else {
         this.ctrlUri = uri;
-        this.ctrl.loadUri(uri);
+        this.ctrlStart = start;
+        this.ctrl.loadUri(uri, false, start);
         this.#kick(tk);
       }
       return;
@@ -550,11 +565,23 @@ export class Playback {
     this.ctrl = null;
     this.ctrlHost = host;
     this.ctrlUri = uri;
+    this.ctrlStart = 0;
     api.createController(host.firstChild, { uri, width: '100%', height: 80 }, (ctrl) => {
       this.ctrl = ctrl;
-      ctrl.addListener('ready', () => this.#kick(this.token));
+      ctrl.addListener('ready', () => this.#ready());
       ctrl.addListener('playback_update', (e) => this.#update(e.data));
     });
+  }
+
+  // Oynatıcı şarkıyı yükledi. İlk kurulumda şarkı baştan yüklenir; ortadan başlaması
+  // isteniyorsa önce o başlangıçla yeniden yüklenir (bu olay bir kez daha gelir).
+  #ready() {
+    if (this.cur && this.wantStart > 0 && this.ctrlStart !== this.wantStart && this.ctrlUri === 'spotify:track:' + this.cur.id) {
+      this.ctrlStart = this.wantStart;
+      this.ctrl.loadUri(this.ctrlUri, false, this.wantStart);
+      return;
+    }
+    this.#kick(this.token);
   }
 
   // Gömülü oynatıcıyı başlatır. play() çalmakta olan şarkıyı baştan başlattığı için yalnızca
@@ -581,19 +608,14 @@ export class Playback {
     if (!data.isPaused) this.live = true;
     const now = Date.now();
     const playing = !data.isPaused && !data.isBuffering;
-    if (playing && this.wantSeek != null) {
-      if (data.duration > 0) {
-        // 30 saniyelik önizlemede ortaya sarmanın anlamı yok; yalnızca tam şarkıda sar.
-        const at = this.wantSeek;
-        this.wantSeek = null;
-        if (data.duration > 60000 && at * 1000 < data.duration - 20000 && data.position < 5000) {
-          try {
-            this.ctrl.seek(at);
-            this.seeked = at * 1000;
-            this.seekAt = now;
-          } catch {}
-        }
-      } else if (now - this.loadedAt > 3000) this.wantSeek = null;
+    // 30 saniyelik önizleme (tarayıcıda Spotify'a girilmemiş) ortadan başlatılamaz: baştan yükle.
+    if (this.ctrlStart > 0 && data.duration > 0 && data.duration <= 60000) {
+      this.ctrlStart = this.wantStart = this.seeked = 0;
+      this.kicking = 0;
+      this.loadedAt = now;
+      this.ctrl.loadUri(this.ctrlUri, false, 0);
+      this.#kick(this.token);
+      return;
     }
     // Ses başladı: bundan sonra konum bildirimi gelmese de kesit en geç birkaç saniye içinde biter.
     if (playing && this.cur.limit && this.status !== 'ended' && !this.tight) {
@@ -602,7 +624,7 @@ export class Playback {
       clearTimeout(this.guard);
       this.guard = setTimeout(() => this.#cut(tk), this.cur.limit + 3500);
     }
-    if (playing && this.cur.limit && this.status !== 'ended' && !this.limitTimer && this.wantSeek == null) {
+    if (playing && this.cur.limit && this.status !== 'ended' && !this.limitTimer) {
       // Kesit süresi sesin başladığı andan sayılır. Şarkı ortadan başlatıldıysa (seeked) konumun
       // oraya gelmesi beklenir; sarma tutmadıysa beklemeyi bırakıp buradan sayar.
       let heard = data.position - this.seeked;
