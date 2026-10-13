@@ -1824,6 +1824,33 @@ a.btn {
   font: 700 22px/1 var(--display);
 }
 
+/* ---------- kapak bulmacası ---------- */
+
+.cover-box {
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: min(340px, 78vw);
+  aspect-ratio: 1;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  overflow: hidden;
+  font-size: 64px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.cover-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Bulanıklık kenarlardan taşmasın diye hafif büyütülür. */
+  scale: 1.14;
+  transition: filter 0.3s linear;
+  user-select: none;
+  pointer-events: none;
+}
+
 /* ---------- düello ---------- */
 
 .arena {

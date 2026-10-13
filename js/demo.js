@@ -29,7 +29,17 @@ export const isDemo = (id) => String(id).startsWith('demo');
 
 export function demoMeta(id) {
   const t = BY_ID.get(id);
-  return t ? { name: t.name, artists: t.artists, img: '', dur: t.dur } : null;
+  return t ? { name: t.name, artists: t.artists, img: 'demo:' + id, dur: t.dur } : null;
+}
+
+// Test şarkıları için uydurma albüm kapağı (kapak bulmacasını yerelde denemek için): sanatçının
+// adını taşıyan renkli bir görsel.
+export function demoCover(id) {
+  const t = BY_ID.get(id);
+  if (!t) return '';
+  const h = cyrb53(t.artists) % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h} 80% 55%)"/><stop offset="1" stop-color="hsl(${(h + 70) % 360} 80% 30%)"/></linearGradient></defs><rect width="300" height="300" fill="url(#g)"/><circle cx="${60 + (h % 160)}" cy="${70 + ((h * 3) % 120)}" r="70" fill="rgba(255,255,255,.25)"/><text x="150" y="250" text-anchor="middle" font-family="sans-serif" font-weight="900" font-size="30" fill="#fff">${t.artists}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
 export function demoLibrary() {

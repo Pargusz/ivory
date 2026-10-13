@@ -3,11 +3,11 @@
 import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, artistMatch, squash, sleep, skipSong, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
-import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS, JAM_MS, DUEL_WIN_OPTIONS } from './host.js';
+import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS, JAM_MS, DUEL_WIN_OPTIONS, COVER_STEP } from './host.js';
 import { ClientSession } from './client.js';
 import { Playback } from './audio.js';
 import { FL, PL, AL, SOURCES, encodeLib } from './lib.js';
-import { demoLibrary, demoMeta, isDemo } from './demo.js';
+import { demoLibrary, demoMeta, demoCover, isDemo } from './demo.js';
 import { lyrics, hintLines, startAt } from './lyrics.js';
 
 const CFG = {
@@ -204,15 +204,22 @@ function saveAsks() {
 // Host için: şarkının başlık bilgisi. "Şarkıyı bil" modunda kesitin başlayacağı yer de (at)
 // eklenir: başı sessiz şarkılar sözlerin başladığı yerden çalar.
 async function resolveMeta(id) {
-  const m = await trackMeta(id);
-  if (!m || m.skip || app.st?.set.mode !== 'name') return m;
+  let m = await trackMeta(id);
+  const mode = app.st?.set.mode;
+  // Kapak bulmacasında albümün adı da doğru cevap sayılır; kendi kütüphanemdeki şarkılarda
+  // albüm adı tutulmadığı için Spotify'dan tamamlanır.
+  if (m && !m.skip && mode === 'cover' && !m.album && !isDemo(id) && spotify.authed()) {
+    const full = await spotify.track(id).catch(() => null);
+    if (full) m = { ...m, album: full.album, img: m.img || full.img };
+  }
+  if (!m || m.skip || mode !== 'name') return m;
   const lines = await Promise.race([lyrics(id, m), sleep(3500).then(() => null)]);
   return { ...m, at: startAt(lines, m.dur) };
 }
 
 async function trackMeta(id) {
-  if (meta.has(id)) return meta.get(id);
   if (isDemo(id)) return demoMeta(id);
+  if (meta.has(id)) return meta.get(id);
   let m = null;
   if (spotify.authed()) m = await spotify.track(id).catch(() => null);
   m ||= await spotify.publicMeta(id).catch(() => null);
@@ -384,7 +391,9 @@ function applyState(st) {
   // Tahmin aşamasında şarkının kesiti, diğerlerinde tamamı çalar.
   // Takım oyununda aşama herkes için ortaktır; aşama değişince yeni kesit çalar.
   // Düelloda bahis sırasında ses yoktur; düello başlayınca şarkı herkese çalar.
-  const want = !rd ? 0 : st.phase === 'guess' ? `g${rd.n}:${rd.gs ?? ''}` : ['vote', 'duel', 'reveal'].includes(st.phase) ? rd.n : 0;
+  // Kapak bulmacası tahmin sırasında sessizdir.
+  const quiet = st.phase === 'guess' && st.set.mode === 'cover';
+  const want = !rd || quiet ? 0 : st.phase === 'guess' ? `g${rd.n}:${rd.gs ?? ''}` : ['vote', 'duel', 'reveal'].includes(st.phase) ? rd.n : 0;
   // Host yanlış tahminimi bildirdi: silah tutukluk yapar.
   const missed = rd?.miss?.[me.id] || 0;
   if (rd?.duel && missed > (app.g.missed || 0)) {
@@ -459,6 +468,9 @@ function sendToCore(msg) {
   else if (msg.t === 'g') app.s.core.guess(msg.r, msg.ok, msg.s);
 }
 
+// Kapak bulmacasında aşama saate bağlıdır: 0 = bulanık, 1 = yarı net, 2 = net.
+const coverStage = (st) => Math.max(0, Math.min(GUESS_STEPS.length - 1, Math.floor((hnow() - st.rd.t0) / (COVER_STEP * 1000))));
+const COVER_LABELS = ['Bulanık', 'Yarı net', 'Net'];
 const hasGuessed = (st) => !!app.g.done || st.rd.done.includes(me.id);
 // Takım oyununda aşamayı host tutar (rd.gs), bireyselde herkes kendi aşamasındadır.
 const coop = (st) => st.rd.turn !== undefined;
@@ -480,6 +492,7 @@ function suggest(text) {
     return update();
   }
   const key = squash(q.toLowerCase());
+  if (app.st?.set.mode === 'cover') return suggestArtists(q, key, g);
   const seen = new Set();
   const add = (list, t) => {
     const id = squash((t.name + '|' + String(t.artists || '').split(',')[0]).toLowerCase());
@@ -508,6 +521,11 @@ function suggest(text) {
 // Yazılan tahmin bu turun şarkısı mı? Listeden seçildiyse sanatçı da tutmalı: aynı adlı başka
 // bir şarkı doğru sayılmaz.
 function isRight(text, st) {
+  const m = st.rd.meta || {};
+  // Kapak bulmacası: sanatçılardan biri, albüm ya da şarkının adı doğru sayılır.
+  if (st.set.mode === 'cover') {
+    return [...String(m.artists || '').split(','), m.album, m.name].some((c) => c && c.trim() && titleMatch(text, c.trim(), ''));
+  }
   const picked = app.g.pick?.name === text ? app.g.pick : null;
   return titleMatch(text, st.rd.meta?.name, st.rd.meta?.artists) && (!picked || artistMatch(picked.artists, st.rd.meta?.artists));
 }
@@ -535,6 +553,33 @@ function shotSound() {
   } catch {}
 }
 
+// Kapak bulmacasının öneri listesi: sanatçı adları (kendi kütüphanem, sonra Spotify araması).
+function suggestArtists(q, key, g) {
+  const seen = new Set();
+  const add = (list, name) => {
+    const id = squash(String(name || '').toLowerCase());
+    if (!id || seen.has(id) || list.length >= 7) return;
+    seen.add(id);
+    list.push({ name: name.trim(), artists: '' });
+  };
+  const mine = [];
+  for (const t of app.lib?.tracks || []) {
+    if (mine.length >= 4) break;
+    for (const a of String(t.artists || '').split(',')) if (squash(a.toLowerCase()).includes(key)) add(mine, a);
+  }
+  g.sug = mine;
+  update();
+  if (!spotify.authed()) return;
+  sugTimer = setTimeout(async () => {
+    const found = await spotify.searchArtists(q).catch(() => []);
+    if (app.g !== g || g.text.trim() !== q) return;
+    const list = mine.slice();
+    for (const name of found) add(list, name);
+    g.sug = list;
+    update();
+  }, 250);
+}
+
 // Takım oyununda sırası gelenin yanıtı: bildi ya da bilemedi (yanlış tahmin, pas).
 function sendTurn(ok) {
   const st = app.st;
@@ -549,9 +594,12 @@ function finishGuess(ok) {
   const st = app.st;
   if (st?.phase !== 'guess' || hasGuessed(st)) return;
   if (coop(st)) return sendTurn(ok);
+  const cover = st.set.mode === 'cover';
+  if (cover) app.g.stage = coverStage(st);
   app.g.done = ok ? 'ok' : 'fail';
   sendToCore({ t: 'g', r: st.rd.n, ok: ok ? 1 : 0, s: app.g.stage });
-  playback.play({ id: st.rd.id, pos: st.rd.meta?.at || 0 });
+  // Kapak bulmacasında şarkı ancak herkes bitirince çalar: ses diğerlerine ipucu olurdu.
+  if (!cover) playback.play({ id: st.rd.id, pos: st.rd.meta?.at || 0 });
   update();
 }
 
@@ -760,12 +808,14 @@ const actions = {
   guess: () => {
     const st = app.st;
     const text = app.g.text.trim();
-    if (st?.phase !== 'guess' || hasGuessed(st) || !text) return;
+    if (st?.phase !== 'guess' || hasGuessed(st) || !text || app.g.jam > Date.now()) return;
     if (coop(st) && st.rd.turn !== me.id) return;
     clearTimeout(sugTimer);
     app.g.sug = [];
     if (isRight(text, st)) return finishGuess(true);
     app.g.text = '';
+    // Kapak bulmacasında yanlış tahmin kısa bir bekleme getirir: rastgele deneme olmasın.
+    if (st.set.mode === 'cover') app.g.jam = Date.now() + 2000;
     if (coop(st)) {
       toast('Bu değil — sıra geçiyor');
       return sendTurn(false);
@@ -1016,7 +1066,7 @@ function settingsView(st, host) {
       .join('')}</div>`;
   const name = set.mode === 'name';
   return `
-    <div class="set-row"><span>Oyun modu</span>${seg('mode', [['who', 'Kim dinliyor?'], ['name', 'Şarkıyı bil'], ['duel', 'Düello']], set.mode)}</div>
+    <div class="set-row"><span>Oyun modu</span>${seg('mode', [['who', 'Kim dinliyor?'], ['name', 'Şarkıyı bil'], ['duel', 'Düello'], ['cover', 'Kapak bulmacası']], set.mode)}</div>
     ${name ? `<div class="set-row"><span>Nasıl oynansın?</span>${seg('team', [['0', 'Bireysel'], ['1', 'Tek takım']], set.team ? '1' : '0')}</div>` : ''}
     <div class="set-row">
       <span>Hangi şarkılar kullanılsın?</span>
@@ -1040,7 +1090,13 @@ function lobbyView(st) {
   const can = host ? app.s.core.canStart() : null;
   const teams = teamsOn(st);
   const rules =
-    st.set.mode === 'duel'
+    st.set.mode === 'cover'
+      ? `<li>Bir albüm kapağı çok bulanık başlar ve adım adım netleşir. <b>Ses çalmaz.</b></li>
+        <li>Sanatçıyı, albümü ya da şarkının adını yazarsın; üçü de doğru sayılır.</li>
+        <li>${COVER_LABELS.map((label, i) => `${label} iken bilen <b class="up">+${GUESS_PTS[i]}</b>`).join(', ')}. Herkesten önce bilen <b class="up">+1</b> ek puan alır.</li>
+        <li>Yanlış tahmin 2 saniye bekletir. Herkes bitirince şarkı çalar.</li>
+        <li><b>${st.set.win} puana</b> ilk ulaşan kazanır.</li>`
+      : st.set.mode === 'duel'
       ? `<li>Her turda iki oyuncu karşı karşıya gelir. Yalnızca <b>bir kişinin</b> dinlediği bir şarkı çalar; o kişinin kim olduğunu <b>ilk bilen</b> ateş eder.</li>
         <li>Diğerleri önce bahis oynar: kimin kazanacağını düşünüyorsan paranı onun yanına koyarsın.</li>
         <li>Düelloyu kazanan <b class="up">+3</b>, ayrıca rakibine oynanan her para için <b class="up">+1</b> alır. Kazanana oynayan <b class="up">+2</b> alır.</li>
@@ -1119,7 +1175,8 @@ function boardView(st, P) {
   const rd = st.rd;
   const ls = new Set(reveal ? rd.ls : []);
   const rows = st.pl.slice().sort((a, b) => b.sc - a.sc || a.name.localeCompare(b.name, 'tr'));
-  const named = st.set.mode === 'name';
+  const named = st.set.mode === 'name' || st.set.mode === 'cover';
+  const when = (stage) => (st.set.mode === 'cover' ? COVER_LABELS[stage].toLocaleLowerCase('tr') + 'ken' : `${GUESS_STEPS[stage]} sn'de`);
   const teams = teamsOn(st) && st.ts != null;
   const teamTiles = teams
     ? `<div class="teams"><div style="--w:${(clamp01(st.ts / st.set.win) * 100).toFixed(1)}%"><span>Takım puanı</span>${reveal && rd.td != null ? `<em class="${rd.td ? 'up' : ''}">${signed(rd.td)}</em>` : ''}<b>${st.ts}</b></div></div>`
@@ -1141,7 +1198,7 @@ function boardView(st, P) {
               : ''
             : named
             ? reveal
-              ? `<span class="votes"><em>${res ? (res[0] ? `${GUESS_STEPS[res[1]]} sn'de bildi${rd.first === p.id && !teams ? ' · ilk' : ''}` : 'bilemedi') : teams ? '' : 'yanıt yok'}</em></span>`
+              ? `<span class="votes"><em>${res ? (res[0] ? `${when(res[1])} bildi${rd.first === p.id && !teams ? ' · ilk' : ''}` : 'bilemedi') : teams ? '' : 'yanıt yok'}</em></span>`
               : ''
             : reveal
             ? `<span class="votes">${
@@ -1436,6 +1493,61 @@ function guessView(st) {
   </main>`;
 }
 
+// Kapak bulmacası: kapak herkes için aynı hızda netleşir; herkes kendi tahminini yazar.
+function coverView(st) {
+  const rd = st.rd;
+  const g = app.g;
+  const P = new Map(st.pl.map((p) => [p.id, p]));
+  const m = rd.meta;
+  const elapsed = Math.max(0, hnow() - rd.t0);
+  const secs = Math.ceil(Math.max(0, rd.t1 - hnow()) / 1000);
+  const done = hasGuessed(st);
+  const stage = coverStage(st);
+  const img = isDemo(rd.id) ? demoCover(rd.id) : safeImg(m?.img);
+  // Son adımın ortasında tamamen net; başta kapağı tanınmaz kılacak kadar bulanık.
+  const clear = done ? 1 : clamp01(elapsed / (COVER_STEP * 2500));
+  const blur = ((1 - clear) ** 1.4 * 36).toFixed(1);
+  const jam = Math.max(0, (g.jam || 0) - Date.now());
+  const active = st.pl.filter((p) => p.on);
+  const steps = COVER_LABELS.map((label, i) => `<li class="${done ? '' : i < stage ? 'past' : i === stage ? 'on' : ''}"><b>${label}</b><span>+${GUESS_PTS[i]}</span></li>`).join('');
+
+  let body;
+  if (done) {
+    const ok = g.done === 'ok';
+    const head = g.done ? (ok ? `Bildin! <b class="up">+${GUESS_PTS[g.stage]}</b>` : 'Bu sefer olmadı') : 'Yanıtın alındı';
+    body = `
+      <div class="answer ${ok ? 'ok' : ''}">
+        <h3>${head}</h3>
+        <p class="title">${esc(m?.artists || '')}</p>
+        <p class="artist">${esc(m?.name || '')}${m?.album ? ' · ' + esc(m.album) : ''}</p>
+      </div>
+      <div class="dock"><p class="waiting"><span class="pulse"></span>Diğerleri bekleniyor · ${rd.done.filter((id) => P.get(id)?.on).length}/${active.length} oyuncu bitirdi</p></div>`;
+  } else {
+    body = `
+      <form class="guess ${jam ? 'jammed' : ''}" data-submit="guess" data-key="guess">
+        <input data-model="guess" ${jam ? 'readonly' : ''} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" maxlength="80" placeholder="${jam ? `Yanlış! ${Math.ceil(jam / 1000)} sn` : 'Sanatçı, albüm ya da şarkı'}" aria-label="Tahminin">
+        <button class="btn primary" type="submit" ${jam ? 'disabled' : ''}>Tahmin et</button>
+        ${g.sug?.length ? `<ul class="sug">${g.sug.map((t, i) => `<li><button type="button" data-act="sug" data-i="${i}"><b>${esc(t.name)}</b><span>${esc(t.artists)}</span></button></li>`).join('')}</ul>` : ''}
+      </form>
+      <div class="dock"><button class="btn" data-act="giveup">Ben Bunu Bilmiom</button></div>`;
+  }
+
+  return `
+  <main class="play" data-key="guess">
+    <div class="play-main g">
+      ${audioView(rd, m, true)}
+      <header class="now">
+        <div class="kicker"><span>Kapak ${rd.no}</span><span class="clock ${secs <= 8 ? 'hot' : ''}">${secs} sn</span></div>
+        <h2 class="title">${done ? 'Tur bitiyor…' : 'Bu kapak kimin?'}</h2>
+      </header>
+      <ol class="steps">${steps}</ol>
+      <div class="cover-box" data-key="cover">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer" draggable="false" style="filter:blur(${blur}px)">` : '<span>♪</span>'}</div>
+      ${body}
+    </div>
+    ${boardView(st, P)}
+  </main>`;
+}
+
 function guessRevealView(st) {
   const rd = st.rd;
   const P = new Map(st.pl.map((p) => [p.id, p]));
@@ -1443,6 +1555,7 @@ function guessRevealView(st) {
   const img = safeImg(m?.img);
   const active = st.pl.filter((p) => p.on);
   const knew = Object.values(rd.res || {}).filter((r) => r[0]).length;
+  const art = isDemo(rd.id) && st.set.mode === 'cover' ? demoCover(rd.id) : img;
   const d = rd.dl?.[me.id];
   const owners = (rd.ls || []).map((id) => P.get(id)).filter(Boolean);
   let cta;
@@ -1459,9 +1572,9 @@ function guessRevealView(st) {
       ${audioView(rd, m)}
       <header class="now">
         <div class="kicker"><span>Şarkı ${rd.no}</span></div>
-        <div class="art">${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : '<span>♪</span>'}</div>
+        <div class="art">${art ? `<img src="${esc(art)}" alt="" referrerpolicy="no-referrer">` : '<span>♪</span>'}</div>
         <h2 class="title">${esc(m?.name || 'Şarkı')}</h2>
-        <p class="artist">${esc(m?.artists || '')}</p>
+        <p class="artist">${esc(m?.artists || '')}${st.set.mode === 'cover' && m?.album ? ' · ' + esc(m.album) : ''}</p>
         ${saveButton(rd)}
       </header>
       <div class="ask">
@@ -1725,7 +1838,7 @@ function roomView() {
   else if (st.phase === 'countdown') body = lobbyView(st) + countdownView(st);
   else if (st.phase === 'won') body = wonView(st);
   else if (st.rd?.duel) body = duelView(st);
-  else if (st.phase === 'guess') body = guessView(st);
+  else if (st.phase === 'guess') body = st.set.mode === 'cover' ? coverView(st) : guessView(st);
   else if (st.phase === 'reveal' && st.rd.res) body = guessRevealView(st);
   else body = playView(st);
   return barView() + body;
@@ -1812,6 +1925,7 @@ function howModal() {
       <li>Herkes “Devam” deyince sıradaki şarkı başlar. Hedef puana ilk ulaşan kazanır.</li>
     </ol>
     <p class="note"><b>Şarkıyı bil modu:</b> host oda ayarlarından açar. Şarkının ilk 5 saniyesi çalar, adını yazarsın; bilemezsen 10, sonra 20 saniye dinlersin. Erken bilen daha çok puan alır (5 / 3 / 2). Bireysel ya da tek takım olarak sırayla oynanır.</p>
+    <p class="note"><b>Kapak bulmacası:</b> albüm kapağı bulanık başlar, adım adım netleşir; ses çalmaz. Sanatçıyı, albümü ya da şarkıyı ne kadar bulanıkken bilirsen o kadar puan alırsın (5 / 3 / 2).</p>
     <p class="note"><b>Düello modu:</b> yalnızca bir kişinin dinlediği bir şarkı çalar; karşı karşıya gelen iki oyuncudan o kişiyi ilk bilen kazanır (+3). Diğerleri bahis oynar: kazanana oynayan +2 alır, kaybedene oynanan paralar kazananın olur. Az bahis alan taraf kazanırsa ödüller iki katıdır.</p>
     <p class="note">Aynı şarkının single ve albüm sürümleri tek şarkı sayılır: birinde single, diğerinde albüm hâli olsa da ikisi de dinleyen olarak çıkar.</p>
     <button class="btn primary" data-act="close">Anladım</button>`;

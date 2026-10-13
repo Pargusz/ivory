@@ -36,9 +36,13 @@ export const GUESS_PTS = [5, 3, 2];
 // Düello: yalnızca bir kişinin dinlediği bir şarkı çalar; karşı karşıya gelen iki oyuncudan
 // o kişiyi ilk bilen kazanır. Diğerleri bahis oynar; kaybedene oynanan her para kazananın olur.
 // Az bahis alan taraf kazanırsa ödüller iki katıdır.
+// Kapak bulmacası: albüm kapağı bulanık başlar, COVER_STEP saniyede bir netleşir; ses çalmaz.
+// Sanatçıyı, albümü ya da şarkıyı ne kadar bulanıkken bilirsen o kadar puan (GUESS_PTS).
+export const COVER_STEP = 8;
+const COVER_MS = 30000;
 export const JAM_MS = 2500; // yanlış tahminden sonra silahın tutukluk süresi
 export const DUEL_WIN_OPTIONS = [15, 30, 50, 75, 100];
-// mode: who = kim dinliyor, name = şarkıyı bil, duel = düello. team (yalnızca name modunda): herkes tek takımdır,
+// mode: who = kim dinliyor, name = şarkıyı bil, duel = düello, cover = kapak bulmacası. team (yalnızca name modunda): herkes tek takımdır,
 // sırayla tahmin eder; bilemeyen sırayı bir sonrakine, şarkıyı bir sonraki aşamaya geçirir.
 export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true, mode: 'who', team: false };
 
@@ -319,7 +323,9 @@ export class HostGame {
     }
     if (r.res[p.id]) return;
     const ok = !!m.ok;
-    r.res[p.id] = [ok ? 1 : 0, Math.max(0, Math.min(GUESS_STEPS.length - 1, m.s | 0))];
+    // Kapak bulmacasında aşama oyuncunun değil saatin işidir: bildiği andaki bulanıklık sayılır.
+    const stage = r.cover ? Math.floor((Date.now() - r.t0) / (COVER_STEP * 1000)) : m.s | 0;
+    r.res[p.id] = [ok ? 1 : 0, Math.max(0, Math.min(GUESS_STEPS.length - 1, stage))];
     if (ok && !r.first) r.first = p.id;
     this.dirty = true;
   }
@@ -509,9 +515,12 @@ export class HostGame {
       this.#prepare();
       return;
     }
-    const name = this.set.mode === 'name';
-    // Şarkıyı bil modunda başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
-    if (t && name && !t.meta?.name && this.skips < 12) {
+    const cover = this.set.mode === 'cover';
+    const name = this.set.mode === 'name' || cover;
+    // Şarkıyı bil modunda başlık, kapak bulmacasında kapak da şart: gelene kadar beklenir,
+    // bulunamazsa başka şarkı seçilir.
+    const lacking = (meta) => !meta?.name || (cover && !meta.img);
+    if (t && name && lacking(t.meta) && this.skips < 12) {
       if (t.settled || Date.now() - t.at > META_WAIT_MS) {
         this.skips++;
         this.next = null;
@@ -527,7 +536,7 @@ export class HostGame {
       return;
     }
     this.next = null;
-    if (!t || (name && !t.meta?.name)) {
+    if (!t || (name && lacking(t.meta))) {
       this.#finish(true);
       return;
     }
@@ -557,6 +566,12 @@ export class HostGame {
       const watchers = [...this.players.values()].some((p) => p.on && !duel.includes(p.id));
       Object.assign(this.round, { duel, bets: {}, miss: {}, jam: {}, win: null, x2: false, bt1: t0 + (watchers ? BET_MS : READY_MS) });
       this.phase = 'bet';
+      this.dirty = true;
+      return;
+    }
+    if (cover) {
+      Object.assign(this.round, { t1: t0 + COVER_MS, res: {}, first: null, cover: true });
+      this.phase = 'guess';
       this.dirty = true;
       return;
     }
@@ -695,7 +710,7 @@ export class HostGame {
     const s = { ...this.set, ...patch };
     s.src &= FL | PL | AL;
     if (!s.src) return;
-    s.mode = ['who', 'name', 'duel'].includes(s.mode) ? s.mode : 'who';
+    s.mode = ['who', 'name', 'duel', 'cover'].includes(s.mode) ? s.mode : 'who';
     // 100 puan yalnızca düelloda var; başka moda geçilince en yakın seçeneğe iner.
     if (s.mode !== 'duel' && s.win > 75) s.win = 75;
     if (!(s.mode === 'duel' ? DUEL_WIN_OPTIONS : WIN_OPTIONS).includes(s.win) || !TIME_OPTIONS.includes(s.time)) return;

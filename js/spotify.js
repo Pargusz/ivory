@@ -339,6 +339,7 @@ export async function track(id) {
     name: t.name,
     artists: (t.artists || []).map((a) => a.name).join(', '),
     img: image(t.album?.images),
+    album: t.album?.name || '',
     dur: t.duration_ms || 0,
     gone: t.is_playable === false, // Spotify'dan kaldırılmış ya da bu ülkede çalınamıyor
   };
@@ -351,6 +352,12 @@ export async function search(q) {
     .filter(Boolean)
     .map((t) => ({ name: t.name, artists: (t.artists || []).map((a) => a.name).join(', ') }))
     .filter((t) => !skipSong(t.name, t.artists));
+}
+
+// Kapak bulmacasındaki öneri listesi için: sanatçı adları.
+export async function searchArtists(q) {
+  const data = await api('/search?type=artist&limit=6&q=' + encodeURIComponent(q));
+  return (data?.artists?.items || []).filter(Boolean).map((a) => a.name);
 }
 
 export async function devices() {
