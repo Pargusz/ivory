@@ -1,6 +1,6 @@
 // Arayüz: ekranlar, etkileşimler ve oturumun (host ya da oyuncu) bağlanması.
 
-import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, squash, sleep, CODE_LEN } from './util.js';
+import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, artistMatch, squash, sleep, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
 import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS } from './host.js';
@@ -680,6 +680,7 @@ const actions = {
     if (!pick || !el) return;
     clearTimeout(sugTimer);
     app.g.text = el.value = pick.name;
+    app.g.pick = pick;
     app.g.sug = [];
     el.focus();
     update();
@@ -691,7 +692,10 @@ const actions = {
     if (coop(st) && st.rd.turn !== me.id) return;
     clearTimeout(sugTimer);
     app.g.sug = [];
-    if (titleMatch(text, st.rd.meta?.name, st.rd.meta?.artists)) return finishGuess(true);
+    // Listeden seçilen şarkıda sanatçı da tutmalı: aynı adlı başka bir şarkı doğru sayılmaz.
+    const picked = app.g.pick?.name === text ? app.g.pick : null;
+    const right = titleMatch(text, st.rd.meta?.name, st.rd.meta?.artists) && (!picked || artistMatch(picked.artists, st.rd.meta?.artists));
+    if (right) return finishGuess(true);
     app.g.text = '';
     if (coop(st)) {
       toast('Bu değil — sıra geçiyor');
@@ -1189,6 +1193,7 @@ function audioView(rd, m, secret = false) {
         ${embedOn && blocked && !secret ? '<p class="note">Ses gelmiyorsa oynatıcıdaki ▶ düğmesine bir kez dokun.</p>' : ''}
         ${noVol ? `<p class="note">${noVol}</p>` : ''}
       </div>
+      ${secret && embedOn && playback.via === 'embed' ? '<p class="note" data-key="novol">Bu oynatıcıda ses düzeyi ayarlanamıyor; sesi cihazından kıs. (Ayar için Spotify Premium ile bağlanmak gerekir.)</p>' : ''}
       <div class="vol ${volOn || stuck ? '' : 'hidden'}" data-key="vol">
         <label class="${volOn ? '' : 'hidden'}">${icon('sound')}<input type="range" min="0" max="100" step="1" value="${Math.round(playback.level * 100)}" data-model="vol" aria-label="Ses düzeyi"></label>
         ${stuck ? '<button class="btn sm ghost" data-act="unmute">Sesi başlat</button>' : ''}
@@ -1327,11 +1332,10 @@ function guessView(st) {
         ${
           team
             ? myTurn && !sent
-              ? `<button class="btn" data-act="giveup">${last ? 'Bilemedim' : `Pas geç · sıradaki ${GUESS_STEPS[stage + 1]} sn dinler`}</button>`
+              ? `<button class="btn" data-act="giveup">Ben Bunu Bilmiom</button>
+                 <p class="note">${last ? 'Son hak: bilinemezse bu şarkıdan puan yok.' : `Bilemezsen ya da ${secs} sn içinde yanıt vermezsen sıra geçer; sıradaki ${GUESS_STEPS[stage + 1]} sn dinler.`}</p>`
               : `<p class="waiting"><span class="pulse"></span>${myTurn ? 'Yanıtın gönderiliyor…' : `Tahmin sırası: ${esc(P.get(rd.turn)?.name || '…')} · tek tahmin hakkı var`}</p>`
-            : last
-              ? `<button class="btn" data-act="giveup">Pes et, şarkıyı göster</button>`
-              : `<button class="btn" data-act="more">Biraz daha · ${GUESS_STEPS[stage + 1]} sn <small>(+${GUESS_PTS[stage + 1]})</small></button>`
+            : `<div class="row">${last ? '' : `<button class="btn" data-act="more">Biraz daha · ${GUESS_STEPS[stage + 1]} sn <small>(+${GUESS_PTS[stage + 1]})</small></button>`}<button class="btn" data-act="giveup">Ben Bunu Bilmiom</button></div>`
         }
       </div>`;
   }

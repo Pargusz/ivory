@@ -155,6 +155,14 @@ export function titleMatch(guess, name, artists) {
   return false;
 }
 
+// İki sanatçı listesinde ortak bir isim var mı? Öneri listesinden seçilen şarkının, aynı adı
+// taşıyan başka bir sanatçının şarkısı olmadığını anlamak için.
+export function artistMatch(a, b) {
+  const names = (s) => String(s || '').toLowerCase().split(',').map(squash).filter(Boolean);
+  const other = names(b);
+  return names(a).some((x) => other.includes(x));
+}
+
 // Aynı şarkının single ve albüm sürümleri farklı Spotify kimliği taşır.
 // Başlık + ilk sanatçıdan türetilen bu anahtar onları tek şarkı olarak eşleştirir.
 export function songKey(name, artist) {

@@ -72,6 +72,10 @@ export class Playback {
     this.cur = null;
     this.status = 'idle'; // idle | loading | playing | blocked | ended (kesit bitti)
     this.limitTimer = 0;
+    this.guard = 0; // kesit hiçbir yoldan durdurulamazsa devreye giren son emniyet
+    this.tight = false;
+    this.seeked = 0;
+    this.seekAt = 0;
     this.devAt = 0;
     this.embedded = false; // gömülü oynatıcı ekranda mı
     this.ctrl = null;
@@ -129,32 +133,58 @@ export class Playback {
     this.local.resume().then(() => this.#set('playing'), () => {});
   }
 
-  // Kesit çalarken (track.limit) süre dolunca sesi keser.
-  #endAfter(tk, ms, quiet) {
+  // Kesiti (track.limit) bitirir: ses nerede çalıyorsa orada susturur.
+  #cut(tk) {
+    if (tk !== this.token || this.status === 'ended') return;
     clearTimeout(this.limitTimer);
-    this.limitTimer = setTimeout(() => {
-      this.limitTimer = 0;
-      if (tk !== this.token) return;
-      quiet();
-      this.#set('ended');
-    }, Math.max(0, ms));
+    clearTimeout(this.guard);
+    this.limitTimer = 0;
+    stopTone();
+    this.#pauseEmbed();
+    if (this.onDevice) spotify.pause(this.device).catch(() => {});
+    if (this.via === 'local' && this.local) {
+      this.local.pause().catch(() => {});
+      this.#holdPaused(tk);
+    }
+    this.#set('ended');
   }
 
-  // Sekme içi oynatıcıda kesitin sonunu şarkının gerçek konumuna bakarak yakalar.
+  #endAfter(tk, ms) {
+    clearTimeout(this.limitTimer);
+    this.limitTimer = setTimeout(() => this.#cut(tk), Math.max(0, ms));
+  }
+
+  // Sekme içi oynatıcıda duraklatma bazen tutmaz; gerçekten sustuğunu birkaç kez doğrular.
+  async #holdPaused(tk) {
+    for (let i = 0; i < 4; i++) {
+      await sleep(250);
+      if (tk !== this.token || this.status !== 'ended') return;
+      const st = await this.local.getCurrentState().catch(() => null);
+      if (tk !== this.token || !st || st.paused) return;
+      this.local.pause().catch(() => {});
+      if (i) spotify.pause(this.localId).catch(() => {});
+    }
+  }
+
+  // Sekme içi oynatıcıda kesitin sonunu şarkının gerçek konumuna bakarak yakalar. Konum
+  // okunamazsa duvar saatine düşer; her durumda kesit, süresinden en çok birkaç saniye sonra biter.
   async #watchLocal(tk, track) {
     const t0 = Date.now();
-    while (tk === this.token) {
-      await sleep(120);
+    const from = track.pos || 0;
+    let zero = 0; // kesitin başladığı an (duvar saati)
+    while (tk === this.token && this.status !== 'ended') {
+      await sleep(100);
       const st = await this.local.getCurrentState().catch(() => null);
       if (tk !== this.token) return;
+      const now = Date.now();
       const cur = st?.track_window?.current_track;
-      const same = cur && (cur.id === track.id || cur.linked_from?.id === track.id);
-      const waited = Date.now() - t0;
-      if (!same && waited < 2500) continue;
-      const at = st && !st.paused ? st.position - (track.pos || 0) : -1;
-      if (at >= track.limit || waited > track.limit + 5000) {
-        this.local.pause().catch(() => {});
-        this.#set('ended');
+      const same = cur && (cur.id === track.id || cur.linked_from?.id === track.id || now - t0 > 3000);
+      const heard = st && !st.paused && same ? st.position - from : -1;
+      // Bir önceki şarkıdan kalan konumu sayma.
+      const valid = heard >= 0 && heard <= now - t0 + 1500;
+      if (valid && !zero) zero = now - heard;
+      if ((valid && heard >= track.limit) || (zero && now - zero >= track.limit + 400) || now - t0 >= track.limit + 1500) {
+        this.#cut(tk);
         return;
       }
     }
@@ -189,13 +219,15 @@ export class Playback {
   }
 
   // track: { id, pos, limit, secret }. limit verilirse şarkı o kadar milisaniye çalıp durur.
-  // secret: şarkı Spotify hesabına bağlı bir oynatıcıda (cihaz ya da sekme içi) çalmaz, çünkü
-  // oralarda çalan şarkının adı oyuncunun Spotify uygulamasında görünür; gömülü oynatıcıda çalar.
+  // secret: şarkı seçili Spotify cihazında çalmaz (orada adı ekranda görünür); bu sekmede çalar.
   async play(track) {
     const tk = ++this.token;
     this.cur = track;
     clearTimeout(this.limitTimer);
+    clearTimeout(this.guard);
     this.limitTimer = 0;
+    this.tight = false;
+    if (track.limit) this.guard = setTimeout(() => this.#cut(tk), track.limit + 10000);
     stopTone();
     if (this.mode === 'none') {
       this.#quiet();
@@ -205,11 +237,10 @@ export class Playback {
     this.#set('loading');
     if (isDemo(track.id)) {
       this.#set(demoTone(track.id) ? 'playing' : 'blocked');
-      if (track.limit) this.#endAfter(tk, track.limit, stopTone);
+      if (track.limit) this.#endAfter(tk, track.limit);
       return;
     }
     if (track.secret) {
-      if (this.via === 'local') this.local?.pause().catch(() => {});
       if (this.onDevice) {
         this.onDevice = false;
         spotify.pause(this.device).catch(() => {});
@@ -222,12 +253,12 @@ export class Playback {
         this.onDevice = true;
         this.#go('device');
         this.#set('playing');
-        if (track.limit) this.#endAfter(tk, track.limit - this.devAt, () => spotify.pause(this.device).catch(() => {}));
+        if (track.limit) this.#endAfter(tk, track.limit - this.devAt);
         return;
       }
       this.notify('Spotify cihazında açılamadı — şarkı bu sekmede çalıyor');
     }
-    const ok = !track.secret && (await this.#onLocal(track, tk));
+    const ok = await this.#onLocal(track, tk);
     if (tk !== this.token) return;
     if (ok) {
       this.#pauseEmbed();
@@ -243,6 +274,7 @@ export class Playback {
   stop() {
     this.token++;
     this.cur = null;
+    clearTimeout(this.guard);
     clearTimeout(this.limitTimer);
     this.limitTimer = 0;
     stopTone();
@@ -448,28 +480,44 @@ export class Playback {
   #update(data) {
     if (!data || !this.cur) return;
     // Yeni şarkı yüklenirken bir önceki şarkıya ait gecikmiş bildirimleri sayma.
-    const stale = data.playingURI && data.playingURI !== 'spotify:track:' + this.cur.id && Date.now() - this.loadedAt < 4000;
+    const stale = data.playingURI && data.playingURI !== 'spotify:track:' + this.cur.id && Date.now() - this.loadedAt < 1500;
     if (stale) return;
     if (!data.isPaused) this.live = true;
+    const now = Date.now();
     const playing = !data.isPaused && !data.isBuffering;
-    if (playing && this.wantSeek != null && data.duration > 0) {
-      // 30 saniyelik önizlemede ortaya sarmanın anlamı yok; yalnızca tam şarkıda sar.
-      const at = this.wantSeek;
-      this.wantSeek = null;
-      if (data.duration > 60000 && at * 1000 < data.duration - 20000 && data.position < 5000) {
-        try {
-          this.ctrl.seek(at);
-          this.seeked = at * 1000;
-        } catch {}
-      }
+    if (playing && this.wantSeek != null) {
+      if (data.duration > 0) {
+        // 30 saniyelik önizlemede ortaya sarmanın anlamı yok; yalnızca tam şarkıda sar.
+        const at = this.wantSeek;
+        this.wantSeek = null;
+        if (data.duration > 60000 && at * 1000 < data.duration - 20000 && data.position < 5000) {
+          try {
+            this.ctrl.seek(at);
+            this.seeked = at * 1000;
+            this.seekAt = now;
+          } catch {}
+        }
+      } else if (now - this.loadedAt > 3000) this.wantSeek = null;
     }
-    // Yeniden başlatmanın hemen ardından eski konum gelebilir; kesit süresini ona göre kurma.
-    // Süre, ses gerçekten ilerlemeye başlayınca (konum > 0) kurulur ki kesit kısa kalmasın.
-    // Şarkı ortadan başlatıldıysa (seeked) süre, sarılan yerden itibaren sayılır.
-    const heard = data.position - this.seeked;
-    const sane = heard > 0 && heard <= Date.now() - this.loadedAt + 1500;
-    if (playing && sane && this.cur.limit && this.status !== 'ended' && !this.limitTimer) {
-      this.#endAfter(this.token, this.cur.limit - heard, () => this.#pauseEmbed());
+    // Ses başladı: bundan sonra konum bildirimi gelmese de kesit en geç birkaç saniye içinde biter.
+    if (playing && this.cur.limit && this.status !== 'ended' && !this.tight) {
+      const tk = this.token;
+      this.tight = true;
+      clearTimeout(this.guard);
+      this.guard = setTimeout(() => this.#cut(tk), this.cur.limit + 3500);
+    }
+    if (playing && this.cur.limit && this.status !== 'ended' && !this.limitTimer && this.wantSeek == null) {
+      // Kesit süresi sesin başladığı andan sayılır. Şarkı ortadan başlatıldıysa (seeked) konumun
+      // oraya gelmesi beklenir; sarma tutmadıysa beklemeyi bırakıp buradan sayar.
+      let heard = data.position - this.seeked;
+      if (heard < -1000) {
+        if (now - this.seekAt < 2500) heard = null;
+        else this.seeked = heard = 0;
+      }
+      if (heard != null) {
+        if (heard < 0 || heard > now - this.loadedAt + 1500) heard = 0;
+        this.#endAfter(this.token, this.cur.limit - heard);
+      }
     }
     if (this.status === 'ended') return;
     if (playing) this.#set('playing');
