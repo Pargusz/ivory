@@ -1,7 +1,7 @@
 // Spotify: sunucusuz giriş (Authorization Code + PKCE), kütüphane okuma, cihazda çalma.
 // Token yalnızca bu tarayıcıda durur; hiçbir sunucuya gönderilmez.
 
-import { ls, uid, sleep, shuffle, skipSong } from './util.js';
+import { ls, ss, uid, sleep, shuffle, skipSong } from './util.js';
 import { FL, PL, AL, EX, MAX_TRACKS, makeTrack } from './lib.js';
 
 const AUTH_URL = 'https://accounts.spotify.com/authorize';
@@ -306,7 +306,16 @@ const CACHE_V = 4;
 
 function keptLibrary() {
   const kept = ls.get('libcache');
-  return kept?.v === CACHE_V && kept.uid && kept.tracks?.length ? kept : null;
+  if (kept?.v === CACHE_V && kept.uid && kept.tracks?.length) return kept;
+  // Kalıcı kayıt yoksa: bu sekmede daha önce okunmuş liste hâlâ duruyor olabilir (sekme
+  // kapanana kadar saklanır). Yalnızca Spotify reddederse kullanılsın diye "eski" sayılır.
+  const tab = ss.get('lib');
+  if (tab?.mode === 'spotify' && tab.tracks?.length) {
+    const found = { v: CACHE_V, uid: auth?.user?.id || 'tab', user: auth?.user || null, at: 0, tracks: tab.tracks };
+    ls.set('libcache', found);
+    return found;
+  }
+  return null;
 }
 
 // limited: Spotify'a ulaşılamadığı için saklanan liste kullanıldı.
