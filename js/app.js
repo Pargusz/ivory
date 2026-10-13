@@ -1476,7 +1476,58 @@ function guessRevealView(st) {
   </main>`;
 }
 
-const GUN = '<svg class="gun" viewBox="0 0 120 70" aria-hidden="true"><path d="M6 16h72v-5h9v5h27v13H93c-2 9-9 14-18 14H63l-7 23H33l9-27H6z"/><circle cx="61" cy="33" r="4.5"/></svg>';
+// Altıpatlar: namlu sağa bakar. Renkler CSS'ten gelir (metal, koyu metal, ahşap kabza).
+const GUN = `<svg class="gun" viewBox="0 0 164 96" aria-hidden="true">
+  <path class="g-wood" d="M34 44c-9 12-17 28-20 42 8 7 22 8 30 3 2-14 7-27 13-38l-7-11z"/>
+  <path class="g-shine" d="M30 54c-5 8-9 18-11 27"/>
+  <path class="g-dark" d="M44 14l-9-11 7-3 9 12z"/>
+  <path class="g-metal" d="M46 12h36v8h70a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H84v12h-6c-2 7-8 10-15 10H44c-8-8-8-32 2-46z"/>
+  <rect class="g-dark" x="84" y="38" width="50" height="7" rx="3.5"/>
+  <path class="g-dark" d="M148 20l3-8h4v8z"/>
+  <rect class="g-drum" x="50" y="16" width="30" height="30" rx="7"/>
+  <path class="g-line" d="M50 26h30M50 36h30"/>
+  <path class="g-guard" d="M56 56c5 18 22 16 26-2"/>
+  <path class="g-line" d="M66 54c1 6 3 9 6 10"/>
+  <circle class="g-dark" cx="42" cy="50" r="2.6"/>
+</svg>`;
+
+// Oyun sonu sahnesi için: taç, surat (mutlu / üzgün) ve sopaya bağlı beyaz don.
+const CROWN = `<svg class="crown" viewBox="0 0 120 78" aria-hidden="true">
+  <path class="c-gold" d="M12 62 6 20l26 20 28-34 28 34 26-20-6 42z"/>
+  <path class="c-shade" d="M12 62h96l-2 10H14z"/>
+  <path class="c-lite" d="M18 30l14 11 26-31 4 5-26 33-17-13z"/>
+  <circle class="c-gold" cx="6" cy="18" r="6"/><circle class="c-gold" cx="60" cy="6" r="6"/><circle class="c-gold" cx="114" cy="18" r="6"/>
+  <circle class="c-red" cx="60" cy="50" r="6"/><circle class="c-blue" cx="34" cy="54" r="4.5"/><circle class="c-blue" cx="86" cy="54" r="4.5"/>
+</svg>`;
+
+const face = (p, mood) => `<svg class="dface ${mood}" viewBox="0 0 100 100" style="--h:${p.hue}" role="img" aria-label="${esc(p.name)}">
+  <circle class="f-skin" cx="50" cy="50" r="46"/>
+  <path class="f-shine" d="M22 36c5-12 15-19 27-21"/>
+  ${
+    mood === 'happy'
+      ? `<path class="f-line" d="M27 44q9-10 18 0M55 44q9-10 18 0"/>
+         <path class="f-mouth" d="M30 60q20 24 40 0z"/><path class="f-tongue" d="M41 71q9 8 18 0-9-5-18 0z"/>
+         <circle class="f-cheek" cx="24" cy="60" r="6"/><circle class="f-cheek" cx="76" cy="60" r="6"/>`
+      : `<path class="f-line brow" d="M24 40l19-9M76 40l-19-9"/>
+         <ellipse class="f-eye" cx="35" cy="50" rx="5" ry="6.5"/><ellipse class="f-eye" cx="65" cy="50" rx="5" ry="6.5"/>
+         <circle class="f-glint" cx="36.5" cy="48" r="1.6"/><circle class="f-glint" cx="66.5" cy="48" r="1.6"/>
+         <path class="f-line" d="M35 76q15-15 30 0"/>
+         <path class="f-tear" d="M71 58c-4 6-5 9-5 11a5 5 0 0 0 10 0c0-2-1-5-5-11z"/>`
+  }
+</svg>`;
+
+const pantsFlag = (stained) => `<svg class="pflag" viewBox="0 0 150 172" aria-hidden="true">
+  <path class="p-stick" d="M18 168 34 8"/>
+  <g class="p-wave">
+    <path class="p-cloth" d="M36 14h102l-6 32c-17 2-28 14-32 38H74c-4-24-15-36-32-38z"/>
+    ${stained ? '<path class="p-stain" d="M70 68c1-11 12-17 22-12 9 5 9 19-1 25-9 5-22-1-21-13z"/><path class="p-stain deep" d="M78 70c1-6 7-8 11-5 5 4 3 11-3 13-5 1-9-3-8-8z"/>' : ''}
+    <path class="p-band" d="M36 14h102l-2.4 13H38.4z"/>
+    <path class="p-seam" d="M80 30c3 18 3 36 0 54M94 30c-3 18-3 36 0 54M46 52c13 3 22 13 26 30M128 52c-13 3-22 13-26 30"/>
+    <path class="p-tag" d="M82 14h10v8H82z"/>
+    <path class="p-tie" d="M30 12q10 4 6 12M32 40q10 3 8 12"/>
+  </g>
+</svg>`;
+
 const HAT = '<svg class="hat" viewBox="0 0 100 46" aria-hidden="true"><path d="M3 37c22 9 72 9 94 0-9-5-19-7-25-7l-6-23c-8-6-24-6-32 0l-6 23c-6 0-16 2-25 7z"/></svg>';
 
 // Düello: iki oyuncu karşı karşıya. Bahis → düello → sonuç aynı sahnede oynanır; oynatıcı
@@ -1512,7 +1563,7 @@ function duelView(st) {
     return `
       <div class="gunman s${side} ${state} ${p.id === me.id ? 'me' : ''} ${canBet && myBet === side ? 'picked' : ''}" style="--h:${p.hue}" ${canBet ? `data-act="bet" data-k="${side}" role="button" tabindex="0"` : ''}>
         <div class="stance">
-          <div class="figure">${HAT}<span class="face">${esc(initial(p.name))}</span>${state === 'hit' ? '<i class="boom">💥</i>' : ''}</div>
+          <div class="figure">${HAT}<span class="face">${esc(initial(p.name))}</span>${state === 'hit' ? '<i class="boom"></i>' : ''}</div>
           <div class="arm">${GUN}<i class="flash"></i>${miss ? `<i class="jam" data-key="jam-${miss}">tık!</i>` : ''}</div>
         </div>
         <b class="gname">${esc(p.name)}${p.id === me.id ? '<em>sen</em>' : ''}</b>
@@ -1591,6 +1642,48 @@ function contDock(st, P) {
       ${waitingFor.length ? `<p class="note">Bekleniyor: ${waitingFor.join(', ')}</p>` : ''}`;
 }
 
+// Düellonun final sahnesi: kazanan taçla yukarıda, diğerleri üzgün suratla beyaz donu sallar.
+function duelFinale(st, winners) {
+  const ids = new Set(winners.map((p) => p.id));
+  const losers = st.pl
+    .filter((p) => !ids.has(p.id))
+    .sort((a, b) => b.sc - a.sc || a.name.localeCompare(b.name, 'tr'));
+  // Donu lekeli talihsiz: herkesin ekranında aynı kişi çıksın diye oyunun kimliğinden seçilir.
+  const unlucky = losers.length ? losers[cyrb53(st.inst + [...ids].join()) % losers.length].id : null;
+  return `
+    <div class="finale" data-key="finale">
+      <div class="champs">
+        ${winners
+          .map(
+            (p) => `
+          <div class="champ" data-key="champ-${p.id}">
+            <div class="rays" aria-hidden="true"></div>
+            ${CROWN}
+            ${face(p, 'happy')}
+            <b>${esc(p.name)}</b>
+            <span>${p.sc} puan</span>
+          </div>`
+          )
+          .join('')}
+      </div>
+      <div class="podium" aria-hidden="true"><i>1</i></div>
+      ${
+        losers.length
+          ? `<div class="losers">${losers
+              .map(
+                (p, i) => `
+          <div class="loser" data-key="loser-${p.id}" style="--d:${(i % 5) * 0.12}s">
+            <div class="pose">${pantsFlag(p.id === unlucky)}${face(p, 'sad')}</div>
+            <b>${esc(p.name)}</b>
+            <span>${p.sc} puan</span>
+          </div>`
+              )
+              .join('')}</div>`
+          : ''
+      }
+    </div>`;
+}
+
 function wonView(st) {
   const P = new Map(st.pl.map((p) => [p.id, p]));
   const winners = st.win.ids.map((id) => P.get(id)).filter(Boolean);
@@ -1603,10 +1696,11 @@ function wonView(st) {
   const recap =
     card('Müzik ikizin', P.get(sum.tw?.[0]), `${sum.tw?.[1]} ortak şarkı · şarkılarının %${sum.tw?.[2]}'i`) +
     card('Seni en iyi tanıyan', P.get(sum.kn?.[0]), `${sum.kn?.[1]} doğru tahmin`);
+  const duel = st.set.mode === 'duel' && winners.length > 0;
   return `
-  <main class="won" data-key="won">
-    <div class="trophy" style="--h:${winners[0]?.hue ?? 50}">${winners[0] ? esc(initial(winners[0].name)) : '?'}</div>
-    <p class="kicker">Oyun bitti</p>
+  <main class="won ${duel ? 'duel-end' : ''}" data-key="won">
+    ${duel ? duelFinale(st, winners) : `<div class="trophy" style="--h:${winners[0]?.hue ?? 50}">${winners[0] ? esc(initial(winners[0].name)) : '?'}</div>`}
+    <p class="kicker">${duel ? 'Düello bitti' : 'Oyun bitti'}</p>
     <h2>${team ? (st.win.out ? 'Şarkılar bitti' : 'Takım başardı!') : `${names} kazandı!`}</h2>
     ${team ? `<p class="note"><b>${team.pts} puan</b> · ${team.songs} şarkıda</p>` : ''}
     ${st.win.out && !team ? '<p class="note">Şarkılar tükendi; en yüksek puan kazandı.</p>' : ''}

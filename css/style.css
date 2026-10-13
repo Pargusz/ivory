@@ -1916,19 +1916,62 @@ a.btn {
   position: relative;
   width: clamp(48px, 14vw, 96px);
   margin-top: 18px;
-  transform-origin: 8% 60%;
+  transform-origin: 16% 66%;
   transition: transform 0.4s cubic-bezier(0.3, 1.7, 0.5, 1), opacity 0.3s;
 }
 
 .gunman.s1 .arm {
-  transform-origin: 92% 60%;
+  transform-origin: 84% 66%;
 }
 
 .gun {
   display: block;
   width: 100%;
-  fill: #e4dfd2;
-  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+  overflow: visible;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.55));
+}
+
+.gun path,
+.gun rect,
+.gun circle {
+  stroke: #16161d;
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.g-metal {
+  fill: #cdd2db;
+}
+
+.g-drum {
+  fill: #eef1f5;
+}
+
+.g-dark {
+  fill: #8e95a3;
+}
+
+.g-wood {
+  fill: #9a5f2c;
+}
+
+.gun .g-shine {
+  fill: none;
+  stroke: #d99a5b;
+  stroke-width: 3;
+}
+
+.gun .g-line {
+  fill: none;
+  stroke: #6f7684;
+  stroke-width: 2.2;
+}
+
+.gun .g-guard {
+  fill: none;
+  stroke: #8e95a3;
+  stroke-width: 5;
 }
 
 .gunman.s1 .gun {
@@ -2035,9 +2078,13 @@ a.btn {
 
 .boom {
   position: absolute;
-  inset: 30% 0 auto;
-  font-size: clamp(30px, 8vw, 46px);
-  font-style: normal;
+  top: 34%;
+  left: 50%;
+  width: clamp(48px, 13vw, 76px);
+  aspect-ratio: 1;
+  translate: -50% -30%;
+  background: radial-gradient(circle, #fff 12%, #ffd84d 34%, #ff9f45 58%, #ff5d73 74%);
+  clip-path: polygon(50% 0, 60% 28%, 85% 12%, 74% 38%, 100% 44%, 76% 56%, 92% 82%, 64% 70%, 56% 100%, 46% 72%, 20% 92%, 30% 62%, 0 56%, 26% 42%, 10% 16%, 40% 28%);
   animation: boom 0.9s 0.25s ease-out both;
 }
 
@@ -2316,6 +2363,351 @@ a.btn {
   color: #2a1700;
   font-size: 13px;
   font-weight: 800;
+}
+
+/* ---------- düellonun final sahnesi ---------- */
+
+.finale {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  width: 100%;
+  padding: 26px 10px 16px;
+  border-radius: var(--r);
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 50% 0, rgba(255, 216, 77, 0.3), transparent 55%),
+    linear-gradient(180deg, rgba(255, 159, 69, 0.14), rgba(0, 0, 0, 0.3)),
+    var(--card);
+  overflow: hidden;
+}
+
+.champs {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: end;
+  gap: 18px;
+}
+
+.champ {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  animation: champ-in 0.7s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+
+@keyframes champ-in {
+  from {
+    opacity: 0;
+    translate: 0 40px;
+    scale: 0.7;
+  }
+}
+
+.rays {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  width: 320px;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: repeating-conic-gradient(rgba(255, 216, 77, 0.2) 0 9deg, transparent 9deg 18deg);
+  mask-image: radial-gradient(circle, #000 20%, transparent 68%);
+  animation: rays 18s linear infinite;
+}
+
+@keyframes rays {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.crown {
+  position: relative;
+  z-index: 2;
+  width: clamp(84px, 24vw, 118px);
+  margin-bottom: clamp(-22px, -5vw, -16px);
+  rotate: -7deg;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+  animation: crown-in 0.9s 0.45s cubic-bezier(0.3, 1.8, 0.5, 1) both;
+}
+
+@keyframes crown-in {
+  from {
+    opacity: 0;
+    translate: 0 -70px;
+    rotate: 24deg;
+  }
+}
+
+.crown path,
+.crown circle {
+  stroke: #5a3d00;
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+}
+
+.c-gold {
+  fill: #ffd23f;
+}
+
+.c-shade {
+  fill: #e8a917;
+}
+
+.crown .c-lite {
+  fill: #fff1a8;
+  stroke: none;
+  opacity: 0.75;
+}
+
+.c-red {
+  fill: #ff4d6d;
+}
+
+.c-blue {
+  fill: #4cc9f0;
+}
+
+.dface {
+  --c: oklch(0.82 0.15 var(--h));
+  position: relative;
+  z-index: 1;
+  display: block;
+  overflow: visible;
+}
+
+.champ .dface {
+  width: clamp(104px, 30vw, 148px);
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.45));
+  animation: bob 2.4s ease-in-out infinite;
+}
+
+@keyframes bob {
+  50% {
+    translate: 0 -6px;
+  }
+}
+
+.f-skin {
+  fill: var(--c);
+  stroke: #16161d;
+  stroke-width: 3;
+}
+
+.f-shine {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+
+.f-line {
+  fill: none;
+  stroke: #16161d;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.f-line.brow {
+  stroke-width: 6;
+}
+
+.f-eye {
+  fill: #16161d;
+}
+
+.f-glint {
+  fill: #fff;
+}
+
+.f-mouth {
+  fill: #16161d;
+  stroke: #16161d;
+  stroke-width: 4;
+  stroke-linejoin: round;
+}
+
+.f-tongue {
+  fill: #ff6b81;
+}
+
+.f-cheek {
+  fill: rgba(255, 93, 115, 0.45);
+}
+
+.f-tear {
+  fill: #7fd8ff;
+  stroke: #16161d;
+  stroke-width: 2;
+  transform-origin: 71px 58px;
+  animation: tear 2.2s ease-in infinite;
+}
+
+@keyframes tear {
+  0%,
+  35% {
+    opacity: 0;
+    translate: 0 -4px;
+    scale: 0.5;
+  }
+  55% {
+    opacity: 1;
+    scale: 1;
+  }
+  100% {
+    opacity: 0;
+    translate: 0 16px;
+  }
+}
+
+.champ b {
+  margin-top: 8px;
+  font: 900 clamp(22px, 6vw, 32px) / 1.1 var(--display);
+  letter-spacing: -0.02em;
+}
+
+.champ span,
+.loser span {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--mute);
+}
+
+.podium {
+  display: grid;
+  place-items: center;
+  width: min(240px, 62%);
+  height: 46px;
+  margin-top: 10px;
+  border-radius: 12px 12px 0 0;
+  background: linear-gradient(180deg, #ffd84d, #c98a12);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.5), 0 10px 24px rgba(0, 0, 0, 0.4);
+  clip-path: polygon(6% 0, 94% 0, 100% 100%, 0 100%);
+}
+
+.podium i {
+  font: 900 22px/1 var(--display);
+  font-style: normal;
+  color: #4a3300;
+}
+
+.losers {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 14px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+  width: 100%;
+}
+
+.loser {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 124px;
+  animation: rise 0.45s calc(0.7s + var(--d)) ease-out both;
+}
+
+.loser .pose {
+  display: flex;
+  align-items: flex-end;
+}
+
+.loser .dface {
+  width: clamp(54px, 14vw, 68px);
+  margin-left: clamp(-34px, -7vw, -26px);
+  margin-bottom: -4px;
+  filter: saturate(0.75) drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+.loser b {
+  max-width: 120px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sopaya bağlı beyaz don: teslim bayrağı. */
+.pflag {
+  width: clamp(78px, 21vw, 104px);
+  overflow: visible;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.45));
+}
+
+.p-stick {
+  fill: none;
+  stroke: #8a5a2b;
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.p-wave {
+  transform-origin: 34px 14px;
+  animation: wave 1.5s calc(var(--d) * 2) ease-in-out infinite alternate;
+}
+
+@keyframes wave {
+  from {
+    transform: rotate(-7deg) skewX(4deg);
+  }
+  to {
+    transform: rotate(8deg) skewX(-5deg);
+  }
+}
+
+.p-cloth {
+  fill: #fbfbfd;
+  stroke: #16161d;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.p-band {
+  fill: #dfe3ec;
+  stroke: #16161d;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+
+.p-seam {
+  fill: none;
+  stroke: #b9bfcc;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.p-tie {
+  fill: none;
+  stroke: #6b4420;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+}
+
+.p-tag {
+  fill: #9db2ff;
+  stroke: #16161d;
+  stroke-width: 1.5;
+}
+
+.p-stain {
+  fill: #a97a45;
+  opacity: 0.55;
+}
+
+.p-stain.deep {
+  fill: #7a4f22;
+  opacity: 0.6;
+}
+
+.won.duel-end {
+  padding-top: 1vh;
 }
 
 /* ---------- tepkiler ve oyun sonu özeti ---------- */
