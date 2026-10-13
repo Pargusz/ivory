@@ -274,6 +274,7 @@ function enterRoom(session) {
   resetRound(0);
   app.voteSent = app.contSent = app.savedRound = app.playedRound = 0;
   app.seenEv = null;
+  playback.prepare();
   ss.set('room', { code: session.code, host: session.host });
   history.replaceState(null, '', '#' + session.code);
   session.chan.open().then(update);

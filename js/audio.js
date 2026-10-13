@@ -97,6 +97,15 @@ export class Playback {
     this.localFails = 0; // art arda geçici hata sayısı; üçte vazgeçilir
     this.connecting = null;
     this.volTimer = 0;
+    // Tarayıcı, sekme içi oynatıcının ses açmasına ancak oyuncunun bir dokunuşundan sonra izin
+    // verir; her dokunuşta izni tazeler.
+    for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, () => this.local?.activateElement?.(), true);
+  }
+
+  // Odaya girerken çağrılır: oynatıcıyı, oyuncunun "gir" dokunuşu henüz tazeyken kurar ki ilk
+  // şarkı "Sesi başlat"a basmayı gerektirmeden çalsın.
+  prepare() {
+    if (this.mode !== 'none') this.#connect();
   }
 
   // Ses düzeyi yalnızca sekme içi oynatıcıda ve ses ayarını destekleyen cihazda değişir.
@@ -131,7 +140,9 @@ export class Playback {
     }
     if (this.via !== 'local' || !this.local) return;
     this.local.activateElement?.();
-    this.local.resume().then(() => this.#set('playing'), () => {});
+    // Kesit hiç duyulmadan engellendiyse baştan çal; yoksa kaldığı yerden sürdür.
+    if (this.cur?.limit) this.play(this.cur);
+    else this.local.resume().then(() => this.#set('playing'), () => {});
   }
 
   // Kesiti (track.limit) bitirir: ses nerede çalıyorsa orada susturur.
@@ -163,7 +174,7 @@ export class Playback {
       const st = await this.local?.getCurrentState().catch(() => null);
       if (tk !== this.token || !st || st.paused) return;
       this.local?.pause().catch(() => {});
-      if (i) spotify.pause(this.localId).catch(() => {});
+      spotify.pause(this.localId).catch(() => {});
     }
   }
 
@@ -176,7 +187,8 @@ export class Playback {
     while (tk === this.token && this.status !== 'ended') {
       await sleep(100);
       const st = await this.local?.getCurrentState().catch(() => null);
-      if (tk !== this.token) return;
+      // Tarayıcı sesi engellediyse kesit sayılmaz; oyuncu "Sesi başlat"a basınca baştan çalar.
+      if (tk !== this.token || this.status === 'blocked') return;
       const now = Date.now();
       const cur = st?.track_window?.current_track;
       const same = cur && (cur.id === track.id || cur.linked_from?.id === track.id || now - t0 > 3000);
@@ -286,11 +298,23 @@ export class Playback {
 
   #quiet() {
     this.#pauseEmbed();
-    if (this.via === 'local') this.local?.pause().catch(() => {});
+    if (this.via === 'local' && this.local) {
+      this.local.pause().catch(() => {});
+      this.#ensureQuiet(this.token);
+    }
     if (this.onDevice) {
       this.onDevice = false;
       spotify.pause(this.device).catch(() => {});
     }
+  }
+
+  // Sekme arka plandayken tarayıcı sesi hiç başlatmaz ve oynatıcının kendi duraklatması tutmaz;
+  // Spotify tarafında şarkı çalıyor görünmeye devam eder. O durumda Spotify üzerinden durdurur.
+  async #ensureQuiet(tk) {
+    await sleep(500);
+    if (tk !== this.token) return;
+    const st = await this.local?.getCurrentState().catch(() => null);
+    if (tk === this.token && st && !st.paused) spotify.pause(this.localId).catch(() => {});
   }
 
   #pauseEmbed() {
@@ -378,10 +402,14 @@ export class Playback {
         return null;
       }
       player.addListener('autoplay_failed', () => {
-        if (this.via === 'local' && this.cur) this.#set('blocked');
+        if (this.via !== 'local' || !this.cur) return;
+        clearTimeout(this.guard);
+        clearTimeout(this.limitTimer);
+        this.limitTimer = 0;
+        this.#set('blocked');
       });
-      // Telefonda ses, oyuncunun bir dokunuşundan sonra açılır.
-      document.addEventListener('pointerdown', () => player.activateElement?.(), { once: true });
+      // Odaya girerkenki dokunuş hâlâ tazeyse ses izni şimdi alınır.
+      player.activateElement?.();
       this.local = player;
       return id;
     })()
