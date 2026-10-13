@@ -9,7 +9,7 @@
 
 import * as spotify from './spotify.js';
 import { demoTone, stopTone, isDemo } from './demo.js';
-import { ls, sleep } from './util.js';
+import { ls, sleep, uid } from './util.js';
 
 let apiReady = null;
 
@@ -92,14 +92,49 @@ export class Playback {
     this.devVolume = null; // seçili cihazın ses düzeyi; cihaz ses ayarını desteklemiyorsa null
     this.local = null; // sekme içi oynatıcı
     this.localId = null;
+    // Oynatıcının Spotify'daki adı. Sekmeye özgüdür: Spotify oynatıcıyı bildirdiği kimlikle
+    // tanımazsa ("Device not found") gerçek kimliği cihaz listesinde bu adla bulunur.
+    this.localName = 'Ivory ' + uid(3);
     this.localOff = false; // sekme içi oynatıcı bu hesapta/tarayıcıda kurulamadı
     this.localWhy = ''; // kurulamadıysa nedeni (ekranda gösterilir)
     this.localFails = 0; // art arda geçici hata sayısı; üçte vazgeçilir
+    this.startAt = 0; // şarkının (tamamı çalarken) başladığı an: canlandırırken kaldığı yeri bulmak için
+    this.revivedAt = 0;
+    this.revives = 0; // bu şarkı kaç kez yeniden başlatıldı
     this.connecting = null;
     this.volTimer = 0;
     // Tarayıcı, sekme içi oynatıcının ses açmasına ancak oyuncunun bir dokunuşundan sonra izin
     // verir; her dokunuşta izni tazeler.
     for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, () => this.local?.activateElement?.(), true);
+  }
+
+  // Bağlantı kopması gibi bir nedenle susan şarkıyı kaldığı yerden yeniden başlatır. İnternet
+  // geri geldiğinde, sekme öne alındığında ve çalma sırasında düzenli olarak çağrılır; şarkı
+  // gerçekten çalıyorsa hiçbir şey yapmaz.
+  async revive() {
+    const track = this.cur;
+    const tk = this.token;
+    if (!track || track.limit || this.mode === 'none' || !['playing', 'loading'].includes(this.status)) return;
+    if (this.via !== 'local' || Date.now() - this.revivedAt < 5000 || this.revives >= 4) return;
+    if (this.status === 'loading' && Date.now() - this.startAt < 8000) return;
+    const st = await this.local?.getCurrentState().catch(() => null);
+    if (tk !== this.token) return;
+    const at = (track.pos || 0) + (Date.now() - this.startAt);
+    // Çalıyorsa ya da şarkı zaten bittiyse dokunma.
+    if ((st && !st.paused) || (st?.duration && at > st.duration - 3000)) return;
+    this.revivedAt = Date.now();
+    const count = this.revives + 1;
+    await this.play({ ...track, pos: at });
+    if (this.cur?.id === track.id) this.revives = count;
+  }
+
+  // Tam şarkı çalarken oynatıcıyı aralıklarla yoklar; susmuşsa canlandırır.
+  async #nurse(tk) {
+    while (tk === this.token) {
+      await sleep(4000);
+      if (tk !== this.token) return;
+      if (document.visibilityState === 'visible') this.revive();
+    }
   }
 
   // Odaya girerken çağrılır: oynatıcıyı, oyuncunun "gir" dokunuşu henüz tazeyken kurar ki ilk
@@ -237,6 +272,8 @@ export class Playback {
   async play(track) {
     const tk = ++this.token;
     this.cur = track;
+    this.startAt = Date.now();
+    this.revives = 0;
     clearTimeout(this.limitTimer);
     clearTimeout(this.guard);
     this.limitTimer = 0;
@@ -278,7 +315,9 @@ export class Playback {
       this.#pauseEmbed();
       this.#go('local');
       this.#set('playing');
+      this.startAt = Date.now();
       if (track.limit) this.#watchLocal(tk, track);
+      else this.#nurse(tk);
       return;
     }
     this.#go('embed');
@@ -332,7 +371,7 @@ export class Playback {
     for (let attempt = 0; attempt < tries; attempt++) {
       try {
         if (!this.warm) {
-          const list = (await spotify.devices()).filter((d) => d.id !== this.localId && d.name !== 'Ivory');
+          const list = (await spotify.devices()).filter((d) => d.id !== this.localId && !d.name.startsWith('Ivory'));
           const dev = list.find((d) => d.id === this.device) || list.find((d) => d.is_active) || (list.length === 1 ? list[0] : null);
           if (!dev) return false;
           if (dev.id !== this.device) {
@@ -372,7 +411,7 @@ export class Playback {
     this.connecting ||= (async () => {
       const sdk = await playerSdk();
       const player = new sdk.Player({
-        name: 'Ivory',
+        name: this.localName,
         volume: this.volume,
         getOAuthToken: (cb) => spotify.accessToken().then(cb, () => cb('')),
       });
@@ -401,6 +440,9 @@ export class Playback {
         player.disconnect();
         return null;
       }
+      // Oynatıcı Spotify'dan düşüp geri geldiğinde (ağ kesintisi) susan şarkıyı sürdür.
+      player.addListener('ready', () => setTimeout(() => this.revive(), 800));
+      player.addListener('playback_error', () => setTimeout(() => this.revive(), 1500));
       player.addListener('autoplay_failed', () => {
         if (this.via !== 'local' || !this.cur) return;
         clearTimeout(this.guard);
@@ -428,6 +470,11 @@ export class Playback {
     return this.connecting;
   }
 
+  async #findLocal() {
+    const list = await spotify.devices().catch(() => []);
+    return list.find((d) => d.name === this.localName)?.id || null;
+  }
+
   async #onLocal(track, tk) {
     if (!(await this.#connect())) return false;
     const uri = 'spotify:track:' + track.id;
@@ -445,17 +492,21 @@ export class Playback {
       } catch (e) {
         why = (e.reason === 'PREMIUM_REQUIRED' ? 'Spotify Premium gerekli' : e.message) + ' (' + e.status + ')';
         if (e.status === 401 || e.status === 403) break;
+        // Spotify oynatıcıyı bu kimlikle tanımıyor: gerçek kimliği cihaz listesinden bul.
+        // Listede de yoksa (ağ kesintisinden sonra düşmüş) aynı oynatıcıyı yeniden bağla.
+        const id = await this.#findLocal();
+        if (id) this.localId = id;
+        else if (attempt === 1) {
+          await this.local?.connect().catch(() => {});
+          await sleep(1200);
+        }
       }
       await sleep(350);
     }
+    // Oynatıcı bırakılıp yeniden kurulmaz: Spotify aynı sayfada ikinci kez kurulan oynatıcıyı
+    // tanımıyor. Aynı oynatıcı sıradaki şarkıda yeniden denenir.
     this.localWhy = why;
     if (/\((401|403)\)$/.test(why) || ++this.localFails >= 3) this.localOff = true;
-    else {
-      // Oynatıcı Spotify'dan düşmüş olabilir: bağlantıyı bırak, sıradaki şarkıda yeniden kurulsun.
-      this.local?.disconnect();
-      this.local = null;
-      this.connecting = null;
-    }
     return false;
   }
 

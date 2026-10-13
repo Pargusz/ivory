@@ -172,6 +172,14 @@ export function songKey(name, artist) {
   return cyrb53(title + '|' + first).toString(36);
 }
 
+// Oyuna hiç girmeyen şarkılar (songKey değerleri). Sessizce ayıklanır.
+const SKIP = new Set(['1arbp13szei', '2e1azebf7r1']);
+export const skipKey = (key) => SKIP.has(key);
+export const skipSong = (name, artists) =>
+  String(artists || '')
+    .split(',')
+    .some((a) => SKIP.has(songKey(name, a.trim())));
+
 // ISRC aynı kaydı tanımlar; single ve albümde çoğu zaman ortaktır.
 export const isrcKey = (isrc) => (isrc ? cyrb53(String(isrc).toUpperCase().replace(/[^A-Z0-9]/g, '')).toString(36) : '');
 

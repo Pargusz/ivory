@@ -1,7 +1,7 @@
 // Spotify: sunucusuz giriş (Authorization Code + PKCE), kütüphane okuma, cihazda çalma.
 // Token yalnızca bu tarayıcıda durur; hiçbir sunucuya gönderilmez.
 
-import { ls, uid, sleep, shuffle } from './util.js';
+import { ls, uid, sleep, shuffle, skipSong } from './util.js';
 import { FL, PL, AL, EX, MAX_TRACKS, makeTrack } from './lib.js';
 
 const AUTH_URL = 'https://accounts.spotify.com/authorize';
@@ -192,6 +192,9 @@ function image(images) {
 
 function add(map, t, flag, albumImg) {
   if (!t || !t.id || t.is_local || (t.type && t.type !== 'track')) return;
+  // Spotify'dan kaldırılmış ya da bu ülkede çalınamayan şarkılar oyuna girmez.
+  if (t.is_playable === false) return;
+  if (skipSong(t.name, (t.artists || []).map((a) => a.name).join(','))) return;
   let e = map.get(t.id);
   if (!e) {
     e = makeTrack({
@@ -228,13 +231,13 @@ async function listOwnPlaylists(me) {
 
 async function playlistItems(id, each) {
   // Şubat 2026'dan beri uç nokta /items; eski uygulamalarda /tracks.
-  let url = `/playlists/${id}/items?limit=50`;
+  let url = `/playlists/${id}/items?limit=50&market=from_token`;
   for (let page = 0; url && page < PAGES_PER_PLAYLIST; page++) {
     let data;
     try {
       data = await api(url);
     } catch (e) {
-      if (page === 0 && (e.status === 404 || e.status === 400)) data = await api(`/playlists/${id}/tracks?limit=50`);
+      if (page === 0 && (e.status === 404 || e.status === 400)) data = await api(`/playlists/${id}/tracks?limit=50&market=from_token`);
       else throw e;
     }
     for (const it of data.items || []) each(it.item || it.track);
@@ -297,19 +300,19 @@ export async function loadLibrary(progress = () => {}) {
 
   // Beğenilen Şarkılar da oyuncunun kendi listesi sayılır.
   await step('Beğenilen şarkılar', async () => {
-    const first = await api('/me/tracks?limit=50');
+    const first = await api('/me/tracks?limit=50&market=from_token');
     for (const it of first.items || []) add(map, it.track, PL);
     const offsets = [];
     for (let o = 50; o < Math.min(first.total || 0, LIKED_PAGES * 50); o += 50) offsets.push(o);
     await pool(offsets, 4, async (o) => {
-      const page = await api('/me/tracks?limit=50&offset=' + o);
+      const page = await api('/me/tracks?limit=50&market=from_token&offset=' + o);
       for (const it of page.items || []) add(map, it.track, PL);
       progress({ label: 'Beğenilen şarkılar', count: map.size });
     });
   });
 
   await step('Kayıtlı albümler', async () => {
-    let url = '/me/albums?limit=50';
+    let url = '/me/albums?limit=50&market=from_token';
     for (let page = 0; url && page < ALBUM_PAGES; page++) {
       const data = await api(url);
       for (const it of data.items || []) {
@@ -331,19 +334,23 @@ export async function loadLibrary(progress = () => {}) {
 }
 
 export async function track(id) {
-  const t = await api('/tracks/' + id);
+  const t = await api('/tracks/' + id + '?market=from_token');
   return {
     name: t.name,
     artists: (t.artists || []).map((a) => a.name).join(', '),
     img: image(t.album?.images),
     dur: t.duration_ms || 0,
+    gone: t.is_playable === false, // Spotify'dan kaldırılmış ya da bu ülkede çalınamıyor
   };
 }
 
 // "Şarkıyı bil" modundaki öneri listesi için.
 export async function search(q) {
   const data = await api('/search?type=track&limit=8&q=' + encodeURIComponent(q));
-  return (data?.tracks?.items || []).filter(Boolean).map((t) => ({ name: t.name, artists: (t.artists || []).map((a) => a.name).join(', ') }));
+  return (data?.tracks?.items || [])
+    .filter(Boolean)
+    .map((t) => ({ name: t.name, artists: (t.artists || []).map((a) => a.name).join(', ') }))
+    .filter((t) => !skipSong(t.name, t.artists));
 }
 
 export async function devices() {

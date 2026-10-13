@@ -1,6 +1,6 @@
 // Arayüz: ekranlar, etkileşimler ve oturumun (host ya da oyuncu) bağlanması.
 
-import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, artistMatch, squash, sleep, CODE_LEN } from './util.js';
+import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, artistMatch, squash, sleep, skipSong, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
 import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS, JAM_MS, DUEL_WIN_OPTIONS } from './host.js';
@@ -205,7 +205,7 @@ function saveAsks() {
 // eklenir: başı sessiz şarkılar sözlerin başladığı yerden çalar.
 async function resolveMeta(id) {
   const m = await trackMeta(id);
-  if (!m || app.st?.set.mode !== 'name') return m;
+  if (!m || m.skip || app.st?.set.mode !== 'name') return m;
   const lines = await Promise.race([lyrics(id, m), sleep(3500).then(() => null)]);
   return { ...m, at: startAt(lines, m.dur) };
 }
@@ -213,16 +213,11 @@ async function resolveMeta(id) {
 async function trackMeta(id) {
   if (meta.has(id)) return meta.get(id);
   if (isDemo(id)) return demoMeta(id);
-  if (spotify.authed()) {
-    try {
-      return await spotify.track(id);
-    } catch {}
-  }
-  try {
-    return await spotify.publicMeta(id);
-  } catch {
-    return null;
-  }
+  let m = null;
+  if (spotify.authed()) m = await spotify.track(id).catch(() => null);
+  m ||= await spotify.publicMeta(id).catch(() => null);
+  // skip: host bu şarkıyla tur açmaz (çalınamıyor ya da oyuna girmiyor).
+  return m && (m.gone || skipSong(m.name, m.artists)) ? { ...m, skip: true } : m;
 }
 
 // ---------- oturum ----------
@@ -283,7 +278,17 @@ function enterRoom(session) {
 
 function startHost(code, saved) {
   let core;
-  const chan = new Channel({ code, id: me.id, host: true, brokers: CFG.brokers, onMessage: (m) => core.handle(m), onChange: update });
+  const chan = new Channel({
+    code,
+    id: me.id,
+    host: true,
+    brokers: CFG.brokers,
+    onMessage: (m) => core.handle(m),
+    onChange: () => {
+      if (chan.online) playback.revive();
+      update();
+    },
+  });
   core = new HostGame({
     code,
     me: { id: me.id, name: me.name, mode: me.mode, count: app.lib.count },
@@ -325,6 +330,7 @@ function startClient(code) {
     onMessage: (m) => core.receive(m),
     onChange: () => {
       core.poke();
+      if (chan.online) playback.revive();
       update();
     },
   });
@@ -484,7 +490,7 @@ function suggest(text) {
   const mine = [];
   for (const t of app.lib?.tracks || []) {
     if (mine.length >= 4) break;
-    if (t.name && squash(t.name.toLowerCase()).includes(key)) add(mine, t);
+    if (t.name && squash(t.name.toLowerCase()).includes(key) && !skipSong(t.name, t.artists)) add(mine, t);
   }
   g.sug = mine;
   update();
@@ -592,7 +598,7 @@ async function refreshDevices(auto = false) {
   try {
     // Bu sekmenin kendi oynatıcısı da Spotify'da cihaz olarak görünür; listede gösterme.
     // Başka bir sekmeden ya da önceki açılıştan kalan "Ivory" oynatıcıları da ayıklanır.
-    app.devices = (await spotify.devices()).filter((d) => d.id !== playback.localId && d.name !== 'Ivory');
+    app.devices = (await spotify.devices()).filter((d) => d.id !== playback.localId && !d.name.startsWith('Ivory'));
   } catch {
     app.devices = [];
   }
@@ -1887,8 +1893,12 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// İnternet geri geldiğinde ya da sekme öne alındığında susmuş şarkıyı yeniden başlat.
+window.addEventListener('online', () => setTimeout(() => playback.revive(), 1500));
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !app.s) return;
+  playback.revive();
   app.s.chan.nudge();
   app.s.core.poke?.();
   if (app.st?.phase && app.st.phase !== 'lobby') keepAwake();

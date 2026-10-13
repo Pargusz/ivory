@@ -4,7 +4,7 @@
 // ya da sayfa yenileme oyunu bozmaz.
 
 import { FL, PL, AL, EX, decodeChunk } from './lib.js';
-import { uid, shuffle, pick, cleanName, hueAt } from './util.js';
+import { uid, shuffle, pick, cleanName, hueAt, skipKey } from './util.js';
 
 const PRESENCE_MS = 12000;
 const HEARTBEAT_MS = 2500;
@@ -423,7 +423,7 @@ export class HostGame {
   }
 
   #fresh(e) {
-    return this.#allowed(e.f) && !this.used.has(e.id) && !e.keys.some((k) => this.used.has(k));
+    return this.#allowed(e.f) && !this.used.has(e.id) && !e.keys.some((k) => this.used.has(k) || skipKey(k.slice(2)));
   }
 
   // Sırayla her oyuncudan bir şarkı: kütüphanesi büyük olan oyunu ele geçirmesin.
@@ -484,6 +484,11 @@ export class HostGame {
       })
       .then((meta) => {
         if (!meta) return;
+        // Çalınamayan (Spotify'dan kaldırılmış) ya da oyuna girmeyen şarkı: tur açılmadan atlanır.
+        if (meta.skip) {
+          next.skip = true;
+          return;
+        }
         next.meta = meta;
         if (this.round?.id === next.id && !this.round.meta) {
           this.round.meta = meta;
@@ -496,6 +501,14 @@ export class HostGame {
   #startRound() {
     this.#prepare();
     const t = this.next;
+    // Şarkının bilgisi (çalınabiliyor mu) gelmek üzereyse kısa bir an beklenir.
+    if (t && !t.settled && Date.now() - t.at < 2500) return;
+    if (t?.skip && this.skips < 12) {
+      this.skips++;
+      this.next = null;
+      this.#prepare();
+      return;
+    }
     const name = this.set.mode === 'name';
     // Şarkıyı bil modunda başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
     if (t && name && !t.meta?.name && this.skips < 12) {
