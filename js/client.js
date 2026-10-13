@@ -24,6 +24,7 @@ export class ClientSession {
     this.libSentAt = 0;
     this.pendingVote = null;
     this.pendingCont = null;
+    this.pendingGuess = null;
     this.gone = false;
   }
 
@@ -80,6 +81,11 @@ export class ClientSession {
     this.send({ t: 'sv' });
   }
 
+  guess(round, ok, s) {
+    this.pendingGuess = { r: round, ok, s, at: Date.now() };
+    this.send({ t: 'g', r: round, ok, s });
+  }
+
   react(e) {
     this.send({ t: 'rx', e });
   }
@@ -116,6 +122,16 @@ export class ClientSession {
       else if (now - v.at > RESEND_MS) {
         v.at = now;
         this.send({ t: 'v', r: v.r, b: v.b });
+      }
+    }
+    const g = this.pendingGuess;
+    if (g) {
+      // Takım oyununda tahmin, sıra ya da aşama değişince işlenmiş demektir.
+      const moved = rd?.turn !== undefined && (rd.turn !== this.me.id || rd.gs !== g.s);
+      if (!rd || rd.n !== g.r || st.phase !== 'guess' || rd.done?.includes(this.me.id) || moved) this.pendingGuess = null;
+      else if (now - g.at > RESEND_MS) {
+        g.at = now;
+        this.send({ t: 'g', r: g.r, ok: g.ok, s: g.s });
       }
     }
     const c = this.pendingCont;

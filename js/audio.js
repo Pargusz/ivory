@@ -70,7 +70,9 @@ export class Playback {
     this.device = ls.get('device', null);
     this.token = 0;
     this.cur = null;
-    this.status = 'idle'; // idle | loading | playing | blocked
+    this.status = 'idle'; // idle | loading | playing | blocked | ended (kesit bitti)
+    this.limitTimer = 0;
+    this.devAt = 0;
     this.embedded = false; // gömülü oynatıcı ekranda mı
     this.ctrl = null;
     this.ctrlHost = null;
@@ -113,9 +115,46 @@ export class Playback {
 
   // Tarayıcı sesi kendiliğinden başlatmadıysa, oyuncunun dokunuşuyla başlatır.
   resume() {
+    if (this.via === 'embed') {
+      try {
+        this.ctrl?.play();
+      } catch {}
+      return;
+    }
     if (this.via !== 'local' || !this.local) return;
     this.local.activateElement?.();
     this.local.resume().then(() => this.#set('playing'), () => {});
+  }
+
+  // Kesit çalarken (track.limit) süre dolunca sesi keser.
+  #endAfter(tk, ms, quiet) {
+    clearTimeout(this.limitTimer);
+    this.limitTimer = setTimeout(() => {
+      this.limitTimer = 0;
+      if (tk !== this.token) return;
+      quiet();
+      this.#set('ended');
+    }, Math.max(0, ms));
+  }
+
+  // Sekme içi oynatıcıda kesitin sonunu şarkının gerçek konumuna bakarak yakalar.
+  async #watchLocal(tk, track) {
+    const t0 = Date.now();
+    while (tk === this.token) {
+      await sleep(120);
+      const st = await this.local.getCurrentState().catch(() => null);
+      if (tk !== this.token) return;
+      const cur = st?.track_window?.current_track;
+      const same = cur && (cur.id === track.id || cur.linked_from?.id === track.id);
+      const waited = Date.now() - t0;
+      if (!same && waited < 2500) continue;
+      const at = st && !st.paused ? st.position - (track.pos || 0) : -1;
+      if (at >= track.limit || waited > track.limit + 5000) {
+        this.local.pause().catch(() => {});
+        this.#set('ended');
+        return;
+      }
+    }
   }
 
   #go(via) {
@@ -146,9 +185,14 @@ export class Playback {
     this.onChange?.();
   }
 
+  // track: { id, pos, limit, secret }. limit verilirse şarkı o kadar milisaniye çalıp durur.
+  // secret: şarkı Spotify hesabına bağlı bir oynatıcıda (cihaz ya da sekme içi) çalmaz, çünkü
+  // oralarda çalan şarkının adı oyuncunun Spotify uygulamasında görünür; gömülü oynatıcıda çalar.
   async play(track) {
     const tk = ++this.token;
     this.cur = track;
+    clearTimeout(this.limitTimer);
+    this.limitTimer = 0;
     stopTone();
     if (this.mode === 'none') {
       this.#quiet();
@@ -158,9 +202,16 @@ export class Playback {
     this.#set('loading');
     if (isDemo(track.id)) {
       this.#set(demoTone(track.id) ? 'playing' : 'blocked');
+      if (track.limit) this.#endAfter(tk, track.limit, stopTone);
       return;
     }
-    if (this.mode === 'device') {
+    if (track.secret) {
+      if (this.via === 'local') this.local?.pause().catch(() => {});
+      if (this.onDevice) {
+        this.onDevice = false;
+        spotify.pause(this.device).catch(() => {});
+      }
+    } else if (this.mode === 'device') {
       this.#pauseEmbed();
       const ok = await this.#onDevice(track, tk);
       if (tk !== this.token) return;
@@ -168,16 +219,18 @@ export class Playback {
         this.onDevice = true;
         this.#go('device');
         this.#set('playing');
+        if (track.limit) this.#endAfter(tk, track.limit - this.devAt, () => spotify.pause(this.device).catch(() => {}));
         return;
       }
       this.notify('Spotify cihazında açılamadı — şarkı bu sekmede çalıyor');
     }
-    const ok = await this.#onLocal(track, tk);
+    const ok = !track.secret && (await this.#onLocal(track, tk));
     if (tk !== this.token) return;
     if (ok) {
       this.#pauseEmbed();
       this.#go('local');
       this.#set('playing');
+      if (track.limit) this.#watchLocal(tk, track);
       return;
     }
     this.#go('embed');
@@ -187,6 +240,8 @@ export class Playback {
   stop() {
     this.token++;
     this.cur = null;
+    clearTimeout(this.limitTimer);
+    this.limitTimer = 0;
     stopTone();
     this.#quiet();
     this.#set('idle');
@@ -235,6 +290,7 @@ export class Playback {
         const st = await spotify.playerState();
         if (st?.is_playing && (!st.device?.id || st.device.id === this.device)) {
           const vol = st.device?.volume_percent;
+          this.devAt = Math.max(0, (st.progress_ms || 0) - (track.pos || 0));
           this.devVolume = st.device?.supports_volume !== false && typeof vol === 'number' ? vol / 100 : null;
           this.warm = true;
           return true;
@@ -364,13 +420,13 @@ export class Playback {
   async #kick(tk) {
     for (const wait of [0, 250, 350, 500, 800, 1400, 2500]) {
       await sleep(wait);
-      if (tk !== this.token || !this.ctrl || this.status === 'playing') return;
+      if (tk !== this.token || !this.ctrl || this.status === 'playing' || this.status === 'ended') return;
       try {
         this.ctrl.play();
       } catch {}
     }
     await sleep(1500);
-    if (tk === this.token && this.status !== 'playing') this.#set('blocked');
+    if (tk === this.token && this.status !== 'playing' && this.status !== 'ended') this.#set('blocked');
   }
 
   #update(data) {
@@ -389,6 +445,10 @@ export class Playback {
         } catch {}
       }
     }
+    if (playing && this.cur.limit && this.status !== 'ended' && !this.limitTimer) {
+      this.#endAfter(this.token, this.cur.limit - data.position, () => this.#pauseEmbed());
+    }
+    if (this.status === 'ended') return;
     if (playing) this.#set('playing');
     else if (this.status === 'playing' && data.isPaused) this.#set('blocked');
   }

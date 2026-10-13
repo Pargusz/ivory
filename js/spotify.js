@@ -340,6 +340,12 @@ export async function track(id) {
   };
 }
 
+// "Şarkıyı bil" modundaki öneri listesi için.
+export async function search(q) {
+  const data = await api('/search?type=track&limit=8&q=' + encodeURIComponent(q));
+  return (data?.tracks?.items || []).filter(Boolean).map((t) => ({ name: t.name, artists: (t.artists || []).map((a) => a.name).join(', ') }));
+}
+
 export async function devices() {
   const data = await api('/me/player/devices');
   return (data?.devices || []).filter((d) => d.id && !d.is_restricted);

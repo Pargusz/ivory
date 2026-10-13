@@ -117,7 +117,7 @@ export function cyrb53(str, seed = 0) {
 const SAME_RECORDING = /feat|ft\.|with\b|remaster|version|versiyon|edit\b|mono|stereo|deluxe|bonus|explicit|clean|single|album|original|\b(19|20)\d\d\b/;
 const OTHER_RECORDING = /live|canl[ıi]|konser|acoustic|akustik|remix|rmx|instrumental|enstr[uü]mantal|karaoke|demo|cover|sped|slowed|nightcore|reverb|orchestral|unplugged/;
 const isNoise = (s) => !OTHER_RECORDING.test(s) && SAME_RECORDING.test(s);
-const squash = (s) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ı/g, 'i').replace(/[^a-z0-9]+/g, '');
+export const squash = (s) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ı/g, 'i').replace(/[^a-z0-9]+/g, '');
 
 export function baseTitle(name) {
   let t = String(name || '').toLowerCase();
@@ -125,6 +125,34 @@ export function baseTitle(name) {
   const dash = t.match(/^(.+?)\s+-\s+(.+)$/);
   if (dash && isNoise(dash[2])) t = dash[1];
   return t.trim();
+}
+
+function editDistance(a, b) {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+// Yazılan tahmin şarkının adı mı? Büyük/küçük harf, Türkçe karakter, noktalama, "(Remastered)"
+// gibi ekler ve bir iki harflik yazım hatası sayılmaz; sanatçı adını eklemek de sorun değildir.
+export function titleMatch(guess, name, artists) {
+  const g = squash(String(guess || '').toLowerCase());
+  if (!g) return false;
+  const raw = String(name || '').toLowerCase();
+  const bare = raw.replace(/\s*[(\[][^)\]]*[)\]]/g, '').replace(/\s+-\s+.*$/, '');
+  const artist = squash(String(artists || '').toLowerCase().split(',')[0]);
+  for (const v of new Set([squash(baseTitle(name)), squash(raw), squash(bare)])) {
+    if (!v) continue;
+    const slack = v.length <= 4 ? 0 : v.length <= 8 ? 1 : v.length <= 14 ? 2 : 3;
+    if (editDistance(g, v) <= slack) return true;
+    if (artist && (g === artist + v || g === v + artist)) return true;
+    if (v.length >= 6 && g.includes(v)) return true;
+  }
+  return false;
 }
 
 // Aynı şarkının single ve albüm sürümleri farklı Spotify kimliği taşır.

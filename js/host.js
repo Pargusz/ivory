@@ -14,13 +14,22 @@ const EVENT_MS = 6000;
 const REACT_MS = 3500;
 const REACT_GAP_MS = 350;
 const SHARED_BIAS = 0.35;
+const GUESS_MS = 90000;
+const TURN_MS = 20000; // takım oyununda kesit bittikten sonra tahmin için tanınan süre
+const META_WAIT_MS = 6000;
+const FIRST_BONUS = 1;
 const RIGHT = 3;
 const WRONG = -1;
 
 export const REACTIONS = ['😂', '🔥', '😍', '😱', '🤨', '💀'];
 export const WIN_OPTIONS = [15, 30, 50, 75];
 export const TIME_OPTIONS = [15, 30, 45, 60];
-export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true };
+// "Şarkıyı bil" modu: şarkının başı 5, 10, 20 saniye dinlenir; ne kadar erken bilinirse o kadar puan.
+export const GUESS_STEPS = [5, 10, 20];
+export const GUESS_PTS = [5, 3, 2];
+// mode: who = kim dinliyor, name = şarkıyı bil. team (yalnızca name modunda): herkes tek takımdır,
+// sırayla tahmin eder; bilemeyen sırayı bir sonrakine, şarkıyı bir sonraki aşamaya geçirir.
+export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true, mode: 'who', team: false };
 
 function buildLib(chunks) {
   const map = new Map();
@@ -64,6 +73,8 @@ export class HostGame {
     this.rn = 0; // tur kimliği: oyunlar arasında da artar
     this.no = 0; // oyun içindeki şarkı sırası
     this.win = null;
+    this.ts = 0; // takım puanı
+    this.skips = 0;
     this.cd = 0;
     this.ev = null;
     this.rx = []; // ekranda uçuşan tepkiler
@@ -109,6 +120,7 @@ export class HostGame {
     else if (m.t === 'c') this.#cont(p, m);
     else if (m.t === 'sv') this.#saved(p);
     else if (m.t === 'rx') this.#react(p, m);
+    else if (m.t === 'g') this.#guess(p, m);
     else if (m.t === 'bye') this.#remove(p.id);
   }
 
@@ -205,6 +217,12 @@ export class HostGame {
         r.dl[newId] = r.dl[old];
         delete r.dl[old];
       }
+      if (r.res && old in r.res) {
+        r.res[newId] = r.res[old];
+        delete r.res[old];
+      }
+      if (r.first === old) r.first = newId;
+      if (r.order) r.order = swap(r.order);
     }
     this.dirty = true;
   }
@@ -251,6 +269,46 @@ export class HostGame {
   #saved(p) {
     this.ev = { id: uid(5), k: 'sv', who: p.name, until: Date.now() + EVENT_MS };
     this.dirty = true;
+  }
+
+  // m.ok: bildi mi; m.s: kaçıncı aşamada (0 = 5 sn). Doğruluğu oyuncunun sayfası denetler.
+  #guess(p, m) {
+    const r = this.round;
+    if (this.phase !== 'guess' || !r || m.r !== r.n) return;
+    if (r.order) {
+      // Takım oyunu: yalnızca sırası gelen, o aşama için tek tahmin yapar.
+      if (p.id === r.order[r.at] && (m.s | 0) === r.stage) this.#turn(p, !!m.ok);
+      return;
+    }
+    if (r.res[p.id]) return;
+    const ok = !!m.ok;
+    r.res[p.id] = [ok ? 1 : 0, Math.max(0, Math.min(GUESS_STEPS.length - 1, m.s | 0))];
+    if (ok && !r.first) r.first = p.id;
+    this.dirty = true;
+  }
+
+  // Sırası gelen bildiyse tur biter; bilemediyse (yanlış, pas ya da süre) şarkı bir sonraki
+  // aşamaya, sıra bir sonraki oyuncuya geçer. Son aşamada da bilinemezse tur kaybedilir.
+  #turn(p, ok) {
+    const r = this.round;
+    if (ok) {
+      r.res[p.id] = [1, r.stage];
+      r.first = p.id;
+      this.#revealGuess();
+      return;
+    }
+    if (r.stage >= GUESS_STEPS.length - 1) {
+      this.#revealGuess();
+      return;
+    }
+    r.stage++;
+    r.at = (r.at + 1) % r.order.length;
+    r.gt1 = Date.now() + GUESS_STEPS[r.stage] * 1000 + TURN_MS;
+    this.dirty = true;
+  }
+
+  #teams() {
+    return this.set.mode === 'name' && this.set.team;
   }
 
   #react(p, m) {
@@ -326,8 +384,11 @@ export class HostGame {
     if (!e) return;
     this.used.add(e.id);
     for (const k of e.keys) this.used.add(k);
-    const next = (this.next = { id: e.id, keys: e.keys, dur: e.dur, meta: null });
+    const next = (this.next = { id: e.id, keys: e.keys, dur: e.dur, meta: null, at: Date.now(), settled: false });
     Promise.resolve(this.resolveMeta(e.id))
+      .finally(() => {
+        next.settled = true;
+      })
       .then((meta) => {
         if (!meta) return;
         next.meta = meta;
@@ -342,11 +403,22 @@ export class HostGame {
   #startRound() {
     this.#prepare();
     const t = this.next;
+    const name = this.set.mode === 'name';
+    // Şarkıyı bil modunda başlık şart: gelene kadar beklenir, bulunamazsa başka şarkı seçilir.
+    if (t && name && !t.meta?.name && this.skips < 12) {
+      if (t.settled || Date.now() - t.at > META_WAIT_MS) {
+        this.skips++;
+        this.next = null;
+        this.#prepare();
+      }
+      return;
+    }
     this.next = null;
-    if (!t) {
+    if (!t || (name && !t.meta?.name)) {
       this.#finish(true);
       return;
     }
+    this.skips = 0;
     const dur = t.dur || t.meta?.dur || 0;
     const t0 = Date.now() + 300;
     this.round = {
@@ -362,6 +434,18 @@ export class HostGame {
       cont: [],
       dl: null,
     };
+    if (name) {
+      Object.assign(this.round, { t1: t0 + GUESS_MS, res: {}, first: null });
+      if (this.#teams()) {
+        // Her şarkıda ilk tahmin sırası bir sonraki oyuncuya kayar.
+        const on = this.rot.filter((id) => this.players.get(id)?.on);
+        const from = on.length ? (this.no - 1) % on.length : 0;
+        Object.assign(this.round, { order: on.slice(from).concat(on.slice(0, from)), at: 0, stage: 0, gt1: t0 + GUESS_STEPS[0] * 1000 + TURN_MS });
+      }
+      this.phase = 'guess';
+      this.dirty = true;
+      return;
+    }
     this.phase = 'vote';
     this.dirty = true;
   }
@@ -389,7 +473,35 @@ export class HostGame {
     if (!this.#leaders().reached) this.#prepare();
   }
 
+  #revealGuess() {
+    const r = this.round;
+    const teams = this.#teams();
+    let total = 0;
+    r.dl = {};
+    for (const p of this.players.values()) {
+      const res = r.res[p.id];
+      if (!res) continue;
+      let delta = res[0] ? GUESS_PTS[res[1]] : 0;
+      // Bireysel oyunda şarkıyı ilk bilen ek puan alır.
+      if (!teams && r.first === p.id) delta += FIRST_BONUS;
+      r.dl[p.id] = delta;
+      p.sc += delta;
+      total += delta;
+    }
+    // Takım oyununda puan ortak kasaya da yazılır; oyuncunun kendi puanı katkısını gösterir.
+    if (teams) {
+      r.td = total;
+      this.ts += total;
+    }
+    this.phase = 'reveal';
+    this.dirty = true;
+    if (!this.#leaders().reached) this.#prepare();
+  }
+
   #leaders() {
+    if (this.#teams()) {
+      return { top: this.ts, reached: this.ts >= this.set.win, ids: [...this.players.keys()] };
+    }
     let top = -Infinity;
     for (const p of this.players.values()) top = Math.max(top, p.sc);
     return { top, reached: top >= this.set.win, ids: [...this.players.values()].filter((p) => p.sc === top).map((p) => p.id) };
@@ -401,7 +513,9 @@ export class HostGame {
   }
 
   #finish(outOfSongs) {
-    this.win = { ids: this.#leaders().ids, out: !!outOfSongs, sum: this.#summary() };
+    const lead = this.#leaders();
+    this.win = { ids: lead.ids, out: !!outOfSongs, sum: this.#summary() };
+    if (this.#teams()) this.win.team = { pts: this.ts, songs: this.no };
     this.phase = 'won';
     this.next = null;
     this.dirty = true;
@@ -458,6 +572,8 @@ export class HostGame {
     if (!WIN_OPTIONS.includes(s.win) || !TIME_OPTIONS.includes(s.time)) return;
     s.mid = !!s.mid;
     s.ex = !!s.ex;
+    s.mode = s.mode === 'name' ? 'name' : 'who';
+    s.team = !!s.team;
     this.set = s;
     this.dirty = true;
   }
@@ -482,6 +598,8 @@ export class HostGame {
     for (const p of this.players.values()) p.sc = 0;
     this.used.clear();
     this.know = {};
+    this.ts = 0;
+    this.skips = 0;
     this.round = null;
     this.next = null;
     this.win = null;
@@ -533,6 +651,19 @@ export class HostGame {
       if (now >= this.cd) this.#startRound();
     } else if (this.phase === 'vote') {
       if (active.every((p) => r.votes[p.id]) || now >= r.t1 + VOTE_GRACE_MS) this.#reveal();
+    } else if (this.phase === 'guess' && r.order) {
+      // Sırası gelen koptuysa sıra aşama harcamadan geçer; süresi dolduysa bilemedi sayılır.
+      if (!this.players.get(r.order[r.at])?.on) {
+        r.order.splice(r.at, 1);
+        if (!r.order.length) this.#revealGuess();
+        else {
+          r.at %= r.order.length;
+          r.gt1 = now + GUESS_STEPS[r.stage] * 1000 + TURN_MS;
+          this.dirty = true;
+        }
+      } else if (now >= r.gt1 + VOTE_GRACE_MS) this.#turn(null, false);
+    } else if (this.phase === 'guess') {
+      if (active.every((p) => r.res[p.id]) || now >= r.t1 + VOTE_GRACE_MS) this.#revealGuess();
     } else if (this.phase === 'reveal') {
       // Odadaki herkes "Devam" demeden sıradaki şarkıya geçilmez (kopanlar beklenmez).
       if (active.every((p) => r.cont.includes(p.id))) this.#advance();
@@ -573,9 +704,13 @@ export class HostGame {
       }),
     };
     if (this.phase === 'countdown') st.cd = this.cd;
-    if (r && (this.phase === 'vote' || this.phase === 'reveal')) {
+    if (this.#teams()) st.ts = this.ts;
+    if (r && (this.phase === 'vote' || this.phase === 'guess' || this.phase === 'reveal')) {
       st.rd = { n: r.n, no: r.no, id: r.id, meta: r.meta, pos: r.pos, t0: r.t0, t1: r.t1, voted: Object.keys(r.votes) };
+      if (r.res) st.rd.done = Object.keys(r.res);
+      if (r.order && this.phase === 'guess') Object.assign(st.rd, { turn: r.order[r.at], gs: r.stage, t1: r.gt1 });
       if (this.phase === 'reveal') Object.assign(st.rd, { ls: r.ls, vt: r.votes, dl: r.dl, cont: r.cont });
+      if (this.phase === 'reveal' && r.res) Object.assign(st.rd, { res: r.res, first: r.first, td: r.td });
     }
     if (this.phase === 'won') st.win = this.win;
     if (this.ev) st.ev = { id: this.ev.id, k: this.ev.k, who: this.ev.who };
@@ -602,6 +737,7 @@ export class HostGame {
       win: this.win,
       cd: this.cd,
       know: this.know,
+      ts: this.ts,
     };
   }
 
@@ -624,6 +760,7 @@ export class HostGame {
     this.win = s.win || null;
     this.cd = s.cd || 0;
     this.know = s.know || {};
-    if ((this.phase === 'vote' || this.phase === 'reveal') && !this.round) this.phase = 'lobby';
+    this.ts = Number(s.ts) || 0;
+    if ((this.phase === 'vote' || this.phase === 'guess' || this.phase === 'reveal') && !this.round) this.phase = 'lobby';
   }
 }
