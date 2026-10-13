@@ -1938,6 +1938,16 @@ a.btn {
   color: #062414;
 }
 
+/* Yakın tahmin: yalnızca yazanın gördüğü sarı balon. */
+.bubble.near {
+  background: #ffd84d;
+  color: #3a2a00;
+}
+
+.guess.jammed:has(input[placeholder^='Yaklaştın']) input {
+  border-color: #ffd84d;
+}
+
 @keyframes bubble {
   from {
     opacity: 0;

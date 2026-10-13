@@ -155,6 +155,20 @@ export function titleMatch(guess, name, artists) {
   return false;
 }
 
+// Tahmin doğru değil ama yakın mı? Birkaç harf uzakta, adın bir parçası ya da sözcüklerinden
+// biri tutuyorsa yakın sayılır ("yaklaştın" ipucu için).
+export function titleNear(guess, name) {
+  const g = squash(String(guess || '').toLowerCase());
+  const raw = String(name || '').toLowerCase();
+  const v = squash(baseTitle(name)) || squash(raw);
+  if (g.length < 3 || !v) return false;
+  if (editDistance(g, v) <= Math.max(2, Math.ceil(v.length * 0.4))) return true;
+  if (v.includes(g) || (v.length >= 4 && g.includes(v))) return true;
+  const words = (s) => s.split(/[^\p{L}\p{N}]+/u).map(squash).filter((w) => w.length >= 3);
+  const mine = words(String(guess).toLowerCase());
+  return words(raw).some((w) => mine.some((m) => editDistance(m, w) <= (w.length <= 4 ? 0 : 1)));
+}
+
 // İki sanatçı listesinde ortak bir isim var mı? Öneri listesinden seçilen şarkının, aynı adı
 // taşıyan başka bir sanatçının şarkısı olmadığını anlamak için.
 export function artistMatch(a, b) {

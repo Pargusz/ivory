@@ -1,6 +1,6 @@
 // Arayüz: ekranlar, etkileşimler ve oturumun (host ya da oyuncu) bağlanması.
 
-import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, artistMatch, squash, sleep, skipSong, CODE_LEN } from './util.js';
+import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, titleMatch, titleNear, artistMatch, squash, sleep, skipSong, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
 import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS, GUESS_STEPS, GUESS_PTS, JAM_MS, DUEL_WIN_OPTIONS, COVER_STEP } from './host.js';
@@ -823,6 +823,10 @@ const actions = {
     // Kapak bulmacasında yanlış tahmin kısa bir bekleme getirir ve herkese balonda görünür.
     if (cover) {
       app.g.jam = Date.now() + 2000;
+      // Yakın tahmin: yalnızca yazan, kendi balonunu sarı görür.
+      const m = st.rd.meta || {};
+      const near = [...String(m.artists || '').split(','), m.album, m.name].some((c) => c && c.trim() && titleNear(text, c.trim()));
+      app.g.near = near ? { x: text.slice(0, 40), until: Date.now() + 3500 } : null;
       sendToCore({ t: 'say', r: st.rd.n, x: text });
     }
     if (coop(st)) {
@@ -1104,7 +1108,7 @@ function lobbyView(st) {
       ? `<li>Bir albüm kapağı çok bulanık başlar ve adım adım netleşir. <b>Ses çalmaz.</b></li>
         <li>Sanatçıyı, albümü ya da şarkının adını yazarsın; üçü de doğru sayılır.</li>
         <li>${COVER_LABELS.map((label, i) => `${label} iken bilen <b class="up">+${GUESS_PTS[i]}</b>`).join(', ')}. Herkesten önce bilen <b class="up">+1</b> ek puan alır.</li>
-        <li>Yanlış tahmin 2 saniye bekletir. Herkes bitirince şarkı çalar.</li>
+        <li>Yanlış tahmin 2 saniye bekletir ve herkese balonda görünür; yaklaştıysan balonun sana sarı görünür.</li>
         <li><b>${st.set.win} puana</b> ilk ulaşan kazanır.</li>`
       : st.set.mode === 'duel'
       ? `<li>Her turda iki oyuncu karşı karşıya gelir. Yalnızca <b>bir kişinin</b> dinlediği bir şarkı çalar; o kişinin kim olduğunu <b>ilk bilen</b> ateş eder.</li>
@@ -1535,7 +1539,7 @@ function coverView(st) {
   } else {
     body = `
       <form class="guess ${jam ? 'jammed' : ''}" data-submit="guess" data-key="guess">
-        <input data-model="guess" ${jam ? 'readonly' : ''} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" maxlength="80" placeholder="${jam ? `Yanlış! ${Math.ceil(jam / 1000)} sn` : 'Sanatçı, albüm ya da şarkı'}" aria-label="Tahminin">
+        <input data-model="guess" ${jam ? 'readonly' : ''} autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send" maxlength="80" placeholder="${jam ? `${g.near ? 'Yaklaştın!' : 'Yanlış!'} ${Math.ceil(jam / 1000)} sn` : 'Sanatçı, albüm ya da şarkı'}" aria-label="Tahminin">
         <button class="btn primary" type="submit" ${jam ? 'disabled' : ''}>Tahmin et</button>
         ${g.sug?.length ? `<ul class="sug">${g.sug.map((t, i) => `<li><button type="button" data-act="sug" data-i="${i}"><b>${esc(t.name)}</b><span>${esc(t.artists)}</span></button></li>`).join('')}</ul>` : ''}
       </form>
@@ -1560,7 +1564,14 @@ function coverView(st) {
             // Yanlış tahminler herkese balonda görünür; doğru cevabı yalnızca yazan, yeşil görür.
             const say = rd.says?.[p.id];
             const mine = p.id === me.id && g.done === 'ok' && g.said;
-            const bubble = mine ? `<i class="bubble ok" data-key="ok">${esc(g.said)}</i>` : say ? `<i class="bubble" data-key="s-${esc(say[0])}">${esc(say[1])}</i>` : '';
+            const near = p.id === me.id && g.near && g.near.until > Date.now() ? g.near : null;
+            const bubble = mine
+              ? `<i class="bubble ok" data-key="ok">${esc(g.said)}</i>`
+              : near
+                ? `<i class="bubble near" data-key="near-${esc(near.x)}">${esc(near.x)}</i>`
+                : say
+                  ? `<i class="bubble" data-key="s-${esc(say[0])}">${esc(say[1])}</i>`
+                  : '';
             return `<div class="peer ${rd.done.includes(p.id) ? 'done' : ''}" data-key="peer-${p.id}">${bubble}${av(p)}<span>${p.id === me.id ? 'sen' : esc(p.name)}</span></div>`;
           })
           .join('')}
