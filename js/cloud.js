@@ -83,7 +83,9 @@ export async function loadLib(uid) {
 export async function dropLib(uid) {
   if (!enabled() || !uid) return false;
   try {
-    await call(uid, 'DELETE');
+    // Güvenlik kuralları boş yazmaya (silmeye) izin vermediği için kaydın içi boşaltılır:
+    // şarkılar ve ad gider, geriye boş bir kabuk kalır.
+    await call(uid, 'PUT', { at: Date.now(), name: '', n: 0, t: '[]' });
     return true;
   } catch {
     return false;
