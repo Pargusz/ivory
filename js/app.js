@@ -213,7 +213,7 @@ async function resolveMeta(id, hint) {
   const mode = app.st?.set.mode;
   // Kapak bulmacasında albümün adı da doğru cevap sayılır; kendi kütüphanemdeki şarkılarda
   // albüm adı tutulmadığı için Spotify'dan tamamlanır.
-  if (m && !m.skip && mode === 'cover' && !m.album && !isDemo(id) && spotify.authed() && !spotify.blockedFor()) {
+  if (m && !m.skip && mode === 'cover' && !m.album && !isDemo(id) && spotify.authed() && !spotify.blockedFor() && !app.st?.set.eco) {
     const full = await spotify.track(id).catch(() => null);
     if (full) m = { ...m, album: full.album, img: m.img || full.img };
   }
@@ -398,6 +398,7 @@ function resetRound(n) {
 // Host'tan (ya da kendi motorumuzdan) gelen her yeni durumda çalışır.
 function applyState(st) {
   app.st = st;
+  playback.eco = !!st.set.eco;
   const rd = st.rd;
   if (rd && rid(st) !== app.round) resetRound(rid(st));
   // Tahmin aşamasında şarkının kesiti, diğerlerinde tamamı çalar.
@@ -521,7 +522,7 @@ function suggest(text) {
   g.sug = mine;
   update();
   // Spotify araması her tuşta değil, yazma durunca yapılır (istek sayısını düşük tutmak için).
-  if (!spotify.authed() || q.length < 3) return;
+  if (!spotify.authed() || q.length < 3 || app.st?.set.eco) return;
   sugTimer = setTimeout(async () => {
     const found = await spotify.search(q).catch(() => []);
     if (app.g !== g || g.text.trim() !== q) return;
@@ -584,7 +585,7 @@ function suggestArtists(q, key, g) {
   }
   g.sug = mine;
   update();
-  if (!spotify.authed() || q.length < 3) return;
+  if (!spotify.authed() || q.length < 3 || app.st?.set.eco) return;
   sugTimer = setTimeout(async () => {
     const found = await spotify.searchArtists(q).catch(() => []);
     if (app.g !== g || g.text.trim() !== q) return;
@@ -1127,7 +1128,9 @@ function settingsView(st, host) {
         : `<div class="set-row"><span>Oy süresi</span>${seg('time', TIME_OPTIONS.map((v) => [v, v + ' sn']), set.time)}</div>
     <div class="set-row"><span>Şarkı nereden başlasın?</span>${seg('mid', [['1', 'Ortadan'], ['0', 'Baştan']], set.mid ? '1' : '0')}</div>`
     }
-    <div class="set-row"><span>Explicit şarkılar</span>${seg('ex', [['1', 'Çalsın'], ['0', 'Çalmasın']], set.ex ? '1' : '0')}</div>`;
+    <div class="set-row"><span>Explicit şarkılar</span>${seg('ex', [['1', 'Çalsın'], ['0', 'Çalmasın']], set.ex ? '1' : '0')}</div>
+    <div class="set-row"><span>Kota dostu mod</span>${seg('eco', [['0', 'Kapalı'], ['1', 'Açık']], set.eco ? '1' : '0')}</div>
+    ${set.eco ? '<p class="note">Şarkılar herkeste sayfadaki oynatıcıdan çalar ve oyun sırasında Spotify’a hiç istek gitmez. Ses düzeyi buradan ayarlanamaz; sesi cihazından ayarla.</p>' : ''}`;
 }
 
 function lobbyView(st) {

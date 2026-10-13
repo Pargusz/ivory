@@ -104,6 +104,7 @@ export class Playback {
     this.revives = 0; // bu şarkı kaç kez yeniden başlatıldı
     this.connecting = null;
     this.volTimer = 0;
+    this.eco = false; // kota dostu oda: Spotify'a istek atmadan, yalnızca gömülü oynatıcıdan çal
     // Tarayıcı, sekme içi oynatıcının ses açmasına ancak oyuncunun bir dokunuşundan sonra izin
     // verir; her dokunuşta izni tazeler.
     for (const ev of ['pointerdown', 'keydown']) document.addEventListener(ev, () => this.local?.activateElement?.(), true);
@@ -297,7 +298,7 @@ export class Playback {
     }
     // Spotify istekleri reddediyorsa (kota) cihazda ya da sekme içi oynatıcıda çalmak mümkün
     // değil; ikisi de istek gerektirir. Gömülü oynatıcı istek harcamaz: doğrudan ona geçilir.
-    const limited = spotify.blockedFor() > 0;
+    const limited = this.eco || spotify.blockedFor() > 0;
     if (track.secret || limited) {
       if (this.via === 'local' && this.local) {
         this.local.pause().catch(() => {});

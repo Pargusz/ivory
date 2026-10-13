@@ -45,7 +45,9 @@ export const JAM_MS = 2500; // yanlış tahminden sonra silahın tutukluk süres
 export const DUEL_WIN_OPTIONS = [15, 30, 50, 75, 100];
 // mode: who = kim dinliyor, name = şarkıyı bil, duel = düello, cover = kapak bulmacası. team (yalnızca name modunda): herkes tek takımdır,
 // sırayla tahmin eder; bilemeyen sırayı bir sonrakine, şarkıyı bir sonraki aşamaya geçirir.
-export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true, mode: 'who', team: false };
+// eco (kota dostu): şarkılar herkeste sayfadaki gömülü oynatıcıdan çalar; oyun sırasında
+// Spotify'a hiç istek gitmez (ses düzeyi ayarlanamaz).
+export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true, mode: 'who', team: false, eco: false };
 
 function buildLib(chunks) {
   const map = new Map();
@@ -742,6 +744,7 @@ export class HostGame {
     if (!(s.mode === 'duel' ? DUEL_WIN_OPTIONS : WIN_OPTIONS).includes(s.win) || !TIME_OPTIONS.includes(s.time)) return;
     s.mid = !!s.mid;
     s.ex = !!s.ex;
+    s.eco = !!s.eco;
     s.team = !!s.team;
     this.set = s;
     this.dirty = true;
