@@ -1345,7 +1345,7 @@ function audioView(rd, m, secret = false) {
         ${embedOn && blocked && !secret ? '<p class="note">Ses gelmiyorsa oynatıcıdaki ▶ düğmesine bir kez dokun.</p>' : ''}
         ${noVol ? `<p class="note">${noVol}</p>` : ''}
       </div>
-      ${secret && embedOn && playback.via === 'embed' ? '<p class="note" data-key="novol">Şarkının adı Spotify'da görünmesin diye tahmin sırasında ses düzeyi buradan ayarlanamıyor; sesi cihazından kıs.</p>' : ''}
+      ${secret && embedOn && playback.via === 'embed' ? '<p class="note" data-key="novol">Şarkının adı Spotify’da görünmesin diye tahmin sırasında ses düzeyi buradan ayarlanamıyor; sesi cihazından kıs.</p>' : ''}
       <div class="vol ${volOn || stuck ? '' : 'hidden'}" data-key="vol">
         <label class="${volOn ? '' : 'hidden'}">${icon('sound')}<input type="range" min="0" max="100" step="1" value="${Math.round(playback.level * 100)}" data-model="vol" aria-label="Ses düzeyi"></label>
         ${stuck ? '<button class="btn sm ghost" data-act="unmute">Sesi başlat</button>' : ''}
