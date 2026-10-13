@@ -154,7 +154,11 @@ async function loadSpotify(force = false) {
       if (tryNextGroup()) return; // sıradaki Spotify uygulamasına yönleniyor
       app.libErr = { kind: 'unreg' };
     } else if (e.status === 401) app.libErr = { kind: 'auth' };
-    else if (e.status === 429) app.libErr = { kind: 'rate' };
+    else if (e.status === 429) {
+      // Bu Spotify uygulaması istekleri reddediyor: varsa diğer uygulamayla bağlanmayı dene.
+      if (tryNextGroup()) return;
+      app.libErr = { kind: 'rate' };
+    }
     else app.libErr = { kind: 'other', text: e.message };
   }
   app.busy = null;
@@ -983,7 +987,8 @@ function spotifyBody() {
     }
     if (app.libErr.kind === 'rate') {
       const wait = spotify.blockedFor();
-      return `<p class="note bad">Spotify şu an bu siteden gelen istekleri sınırlıyor (kısa sürede çok fazla istek geldi). ${wait ? `Yaklaşık <b>${wait >= 90 ? Math.ceil(wait / 60) + ' dakika' : wait + ' saniye'}</b> sonra yeniden dene.` : 'Biraz bekleyip yeniden dene.'}</p>
+      const when = wait ? `Yaklaşık <b>${wait >= 90 ? Math.ceil(wait / 60) + ' dakika' : wait + ' saniye'}</b> sonra yeniden dene.` : 'Biraz bekleyip yeniden dene.';
+      return `<p class="note bad">${spotify.quotaOut() ? 'Bu sitenin Spotify istek kotası doldu; Spotify bir süre istekleri reddediyor (saatler sürebilir).' : 'Spotify şu an bu siteden gelen istekleri sınırlıyor (kısa sürede çok fazla istek geldi).'} ${when}</p>
       <p class="note">Ne kadar süreceğini Spotify bildirmiyor; art arda denemek süreyi uzatır.</p>
       <div class="mini-actions"><button class="btn sm" data-act="reload" ${wait ? 'disabled' : ''}>Tekrar dene</button></div>`;
     }

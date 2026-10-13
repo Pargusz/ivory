@@ -165,8 +165,11 @@ export async function accessToken() {
 // okunamıyor). Bu yüzden: istekler seyreltilir, 429 gelince durulur ve bir süre hiç istek atılmaz.
 const GAP_MS = 110; // iki isteğin başlangıcı arasındaki en kısa süre
 const BLOCK_STEPS = [60, 120, 300, 600, 900]; // art arda engellenmede bekleme (saniye)
+const QUOTA_BLOCK = 900; // uygulamanın kotası dolduysa (QUOTA_EXCEEDED) en az bu kadar beklenir
 let nextSlot = 0;
-let rate = ls.get('rate', { until: 0, level: 0 });
+// Sınır uygulama (Client ID) başınadır; her uygulamanın engeli ayrı tutulur.
+let rates = ls.get('rates', {});
+const myRate = () => rates[auth?.idx ?? 0] || { until: 0, level: 0 };
 
 async function pace() {
   const now = Date.now();
@@ -176,22 +179,28 @@ async function pace() {
 }
 
 // Spotify bu siteyi şu an engelliyorsa kaç saniye sonra yeniden denenebileceği; yoksa 0.
-export const blockedFor = () => Math.max(0, Math.ceil((rate.until - Date.now()) / 1000));
+export const blockedFor = () => Math.max(0, Math.ceil((myRate().until - Date.now()) / 1000));
+// Engel kısa süreli bir yoğunluk değil, uygulamanın kotasının dolması mı? (Saatler sürebilir.)
+export const quotaOut = () => !!myRate().quota && blockedFor() > 0;
 
-function tooMany() {
-  rate = { until: Date.now() + BLOCK_STEPS[Math.min(rate.level, BLOCK_STEPS.length - 1)] * 1000, level: rate.level + 1, at: Date.now() };
-  ls.set('rate', rate);
+function tooMany(quota) {
+  const rate = myRate();
+  const wait = Math.max(BLOCK_STEPS[Math.min(rate.level, BLOCK_STEPS.length - 1)], quota ? QUOTA_BLOCK : 0);
+  rates = { ...rates, [auth?.idx ?? 0]: { until: Date.now() + wait * 1000, level: rate.level + 1, at: Date.now(), quota: !!quota } };
+  ls.set('rates', rates);
 }
 
 function rateOk() {
   // Bir süredir sorunsuz gidiyorsa ceza basamağı sıfırlanır.
+  const rate = myRate();
   if (rate.level && Date.now() - (rate.at || 0) > 20 * 60000) {
-    rate = { until: 0, level: 0 };
-    ls.del('rate');
+    rates = { ...rates };
+    delete rates[auth?.idx ?? 0];
+    ls.set('rates', rates);
   }
 }
 
-const rateError = () => new SpotifyError(429, 'Spotify çok fazla istek aldı', 'RATE');
+const rateError = () => new SpotifyError(429, 'Spotify çok fazla istek aldı', myRate().quota ? 'QUOTA' : 'RATE');
 
 async function api(path, { method = 'GET', body, attempt = 0 } = {}) {
   if (!auth) throw new SpotifyError(401, 'Spotify bağlı değil');
@@ -209,12 +218,13 @@ async function api(path, { method = 'GET', body, attempt = 0 } = {}) {
     return api(path, { method, body, attempt: attempt + 1 });
   }
   if (res.status === 429) {
-    // Bir kez, biraz bekleyip yeniden dene; yine reddedilirse ısrar etme.
-    if (attempt < 1 && !blockedFor()) {
+    const quota = /QUOTA_EXCEEDED/.test(await res.text().catch(() => ''));
+    // Kısa süreli yoğunlukta bir kez, biraz bekleyip yeniden dene; kota dolduysa hiç ısrar etme.
+    if (!quota && attempt < 1 && !blockedFor()) {
       await sleep(2500);
       return api(path, { method, body, attempt: attempt + 1 });
     }
-    if (!blockedFor()) tooMany();
+    if (!blockedFor()) tooMany(quota);
     throw rateError();
   }
   rateOk();
