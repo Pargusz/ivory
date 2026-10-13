@@ -1493,6 +1493,122 @@ a.btn {
   pointer-events: none;
 }
 
+/* ---------- tepkiler ve oyun sonu özeti ---------- */
+
+.reacts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.reacts button {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 0.12s, background 0.15s;
+}
+
+.reacts button:hover {
+  background: var(--card-2);
+}
+
+.reacts button:active {
+  transform: scale(1.25);
+}
+
+.fly {
+  position: fixed;
+  bottom: 12vh;
+  z-index: 60;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: fly 2.8s ease-out forwards;
+}
+
+.fly b {
+  font-size: 44px;
+  line-height: 1;
+}
+
+.fly span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: oklch(0.82 0.15 var(--h));
+  color: #0a0a10;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+@keyframes fly {
+  0% {
+    opacity: 0;
+    translate: 0 30px;
+    scale: 0.5;
+  }
+  12% {
+    opacity: 1;
+    scale: 1.15;
+  }
+  22% {
+    scale: 1;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    translate: 0 -55vh;
+  }
+}
+
+.recap {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.recap > div {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 16px 14px;
+  border-radius: var(--r);
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.recap span {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.recap b {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font: 700 20px/1.1 var(--display);
+}
+
+.recap em {
+  font-style: normal;
+  font-size: 14px;
+  color: var(--mute);
+}
+
 /* ---------- geri sayım, pencereler, bildirimler ---------- */
 
 .countdown {

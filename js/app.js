@@ -3,7 +3,7 @@
 import { $, esc, uid, makeCode, cleanCode, cleanName, ls, ss, onTick, copyText, cyrb53, CODE_LEN } from './util.js';
 import * as spotify from './spotify.js';
 import { Channel } from './net.js';
-import { HostGame, WIN_OPTIONS, TIME_OPTIONS } from './host.js';
+import { HostGame, WIN_OPTIONS, TIME_OPTIONS, REACTIONS } from './host.js';
 import { ClientSession } from './client.js';
 import { Playback } from './audio.js';
 import { FL, PL, AL, SOURCES, encodeLib } from './lib.js';
@@ -368,10 +368,31 @@ function applyState(st) {
     app.seenEv = st.ev.id;
     if (st.ev.k === 'sv') toast(`${st.ev.who} bu şarkıyı listesine ekledi`, 'good');
   }
+  for (const [id, who, e] of st.rx || []) {
+    if (seenRx.has(id)) continue;
+    seenRx.add(id);
+    if (seenRx.size > 200) seenRx.delete(seenRx.values().next().value);
+    flyReaction(st.pl.find((p) => p.id === who), REACTIONS[e]);
+  }
   if (st.phase !== 'lobby') keepAwake();
   if (st.phase === 'won') requestAnimationFrame(() => confetti());
   update();
 }
+
+const seenRx = new Set();
+
+// Tepki, çizimden bağımsız olarak ekranın altından yukarı süzülür.
+function flyReaction(p, emoji) {
+  if (!emoji) return;
+  const el = document.createElement('div');
+  el.className = 'fly';
+  el.style.left = 8 + Math.random() * 84 + '%';
+  el.innerHTML = `<b>${emoji}</b>${p ? `<span style="--h:${p.hue}">${esc(p.name)}</span>` : ''}`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2800);
+}
+
+const reactBar = () => `<div class="reacts" data-key="reacts">${REACTIONS.map((e, i) => `<button data-act="react" data-e="${i}" aria-label="Tepki ${e}">${e}</button>`).join('')}</div>`;
 
 const hasVoted = (st) => app.voteSent === st.rd.n || st.rd.voted.includes(me.id);
 const hasContinued = (st) => app.contSent === st.rd.n || st.rd.cont.includes(me.id);
@@ -381,6 +402,7 @@ function sendToCore(msg) {
   else if (msg.t === 'v') app.s.core.vote(msg.r, msg.b);
   else if (msg.t === 'c') app.s.core.cont(msg.r);
   else if (msg.t === 'sv') app.s.core.saved();
+  else if (msg.t === 'rx') app.s.core.react(msg.e);
 }
 
 function submitVote(force) {
@@ -545,6 +567,9 @@ const actions = {
     app.contSent = st.rd.n;
     sendToCore({ t: 'c', r: st.rd.n });
     update();
+  },
+  react: ({ e }) => {
+    if (app.s) sendToCore({ t: 'rx', e: Number(e) });
   },
   again: () => actions.start(),
   lobby: () => app.s.core.toLobby(),
@@ -1053,6 +1078,7 @@ function playView(st) {
         <label>${icon('sound')}<input type="range" min="0" max="100" step="1" value="${Math.round(playback.level * 100)}" data-model="vol" aria-label="Ses düzeyi"></label>
         ${stuck ? '<button class="btn sm ghost" data-act="unmute">Sesi başlat</button>' : ''}
       </div>
+      ${reveal ? reactBar() : ''}
       <div class="dock">${cta}</div>
     </div>
     ${boardView(st, P)}
@@ -1064,13 +1090,21 @@ function wonView(st) {
   const winners = st.win.ids.map((id) => P.get(id)).filter(Boolean);
   const names = winners.map((p) => esc(p.name)).join(' ve ') || 'Kimse';
   const hostP = P.get(st.host);
+  // Oyun sonu özeti: bana özel iki kart.
+  const sum = st.win.sum?.[me.id] || {};
+  const card = (label, p, detail) => (p ? `<div><span>${label}</span><b>${av(p)}${esc(p.name)}</b><em>${detail}</em></div>` : '');
+  const recap =
+    card('Müzik ikizin', P.get(sum.tw?.[0]), `${sum.tw?.[1]} ortak şarkı · şarkılarının %${sum.tw?.[2]}'i`) +
+    card('Seni en iyi tanıyan', P.get(sum.kn?.[0]), `${sum.kn?.[1]} doğru tahmin`);
   return `
   <main class="won" data-key="won">
     <div class="trophy" style="--h:${winners[0]?.hue ?? 50}">${winners[0] ? esc(initial(winners[0].name)) : '?'}</div>
     <p class="kicker">Oyun bitti</p>
     <h2>${names} kazandı!</h2>
     ${st.win.out ? '<p class="note">Şarkılar tükendi; en yüksek puan kazandı.</p>' : ''}
+    ${recap ? `<div class="recap">${recap}</div>` : ''}
     ${boardView(st, P)}
+    ${reactBar()}
     <div class="dock">
       ${
         isHost()

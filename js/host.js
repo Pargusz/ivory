@@ -11,10 +11,13 @@ const HEARTBEAT_MS = 2500;
 const VOTE_GRACE_MS = 2500;
 const COUNTDOWN_MS = 5000;
 const EVENT_MS = 6000;
+const REACT_MS = 3500;
+const REACT_GAP_MS = 350;
 const SHARED_BIAS = 0.35;
 const RIGHT = 3;
 const WRONG = -1;
 
+export const REACTIONS = ['😂', '🔥', '😍', '😱', '🤨', '💀'];
 export const WIN_OPTIONS = [15, 30, 50, 75];
 export const TIME_OPTIONS = [15, 30, 45, 60];
 export const DEFAULT_SETTINGS = { src: FL | PL | AL, win: 30, time: 30, mid: true, ex: true };
@@ -63,6 +66,9 @@ export class HostGame {
     this.win = null;
     this.cd = 0;
     this.ev = null;
+    this.rx = []; // ekranda uçuşan tepkiler
+    this.rxAt = new Map();
+    this.know = {}; // know[oy veren][hedef] = [doğru, yanlış]: oyun sonu özeti için
     this.dirty = true;
     this.lastCast = 0;
     this.closed = false;
@@ -102,6 +108,7 @@ export class HostGame {
     else if (m.t === 'v') this.#vote(p, m);
     else if (m.t === 'c') this.#cont(p, m);
     else if (m.t === 'sv') this.#saved(p);
+    else if (m.t === 'rx') this.#react(p, m);
     else if (m.t === 'bye') this.#remove(p.id);
   }
 
@@ -177,6 +184,15 @@ export class HostGame {
     this.libs.delete(old);
     p.lr = '';
     this.rot = this.rot.map((x) => (x === old ? newId : x));
+    if (this.know[old]) {
+      this.know[newId] = this.know[old];
+      delete this.know[old];
+    }
+    for (const row of Object.values(this.know)) {
+      if (!row[old]) continue;
+      row[newId] = row[old];
+      delete row[old];
+    }
     const r = this.round;
     if (r) {
       const swap = (list) => list.map((x) => (x === old ? newId : x));
@@ -234,6 +250,17 @@ export class HostGame {
 
   #saved(p) {
     this.ev = { id: uid(5), k: 'sv', who: p.name, until: Date.now() + EVENT_MS };
+    this.dirty = true;
+  }
+
+  #react(p, m) {
+    const now = Date.now();
+    if (this.phase !== 'reveal' && this.phase !== 'won') return;
+    if (!Number.isInteger(m.e) || m.e < 0 || m.e >= REACTIONS.length) return;
+    if (now - (this.rxAt.get(p.id) || 0) < REACT_GAP_MS) return;
+    this.rxAt.set(p.id, now);
+    this.rx.push({ id: uid(5), p: p.id, e: m.e, until: now + REACT_MS });
+    if (this.rx.length > 16) this.rx.shift();
     this.dirty = true;
   }
 
@@ -347,7 +374,13 @@ export class HostGame {
       const ballot = r.votes[p.id];
       if (!ballot) continue;
       let delta = 0;
-      for (const id of ballot) delta += listeners.has(id) ? RIGHT : WRONG;
+      for (const id of ballot) {
+        const hit = listeners.has(id);
+        delta += hit ? RIGHT : WRONG;
+        if (id === p.id) continue;
+        const row = (this.know[p.id] ||= {});
+        (row[id] ||= [0, 0])[hit ? 0 : 1]++;
+      }
       r.dl[p.id] = delta;
       p.sc += delta;
     }
@@ -368,10 +401,51 @@ export class HostGame {
   }
 
   #finish(outOfSongs) {
-    this.win = { ids: this.#leaders().ids, out: !!outOfSongs };
+    this.win = { ids: this.#leaders().ids, out: !!outOfSongs, sum: this.#summary() };
     this.phase = 'won';
     this.next = null;
     this.dirty = true;
+  }
+
+  // Oyun sonu özeti, oyuncu başına: tw = müzik ikizi [kim, ortak şarkı, kendi şarkılarının yüzdesi],
+  // kn = onu en iyi tanıyan [kim, doğru tahmin].
+  #summary() {
+    const sets = new Map();
+    for (const id of this.players.keys()) {
+      const lib = this.libs.get(id);
+      if (!lib?.ready || !lib.map.size) continue;
+      const set = new Set();
+      for (const e of lib.map.values()) set.add(e.keys[0] || e.id);
+      sets.set(id, set);
+    }
+    const sum = {};
+    for (const id of this.players.keys()) {
+      const s = {};
+      const mine = sets.get(id);
+      let best = 0;
+      for (const [other, theirs] of mine ? sets : []) {
+        if (other === id) continue;
+        const [small, big] = mine.size < theirs.size ? [mine, theirs] : [theirs, mine];
+        let n = 0;
+        for (const k of small) if (big.has(k)) n++;
+        // İki kütüphanenin büyüklüğü çok farklıysa da adil olsun diye birleşime oranlanır.
+        const score = n / (mine.size + theirs.size - n);
+        if (n && score > best) {
+          best = score;
+          s.tw = [other, n, Math.max(1, Math.round((n * 100) / mine.size))];
+        }
+      }
+      let top = null;
+      for (const [voter, row] of Object.entries(this.know)) {
+        const a = row[id];
+        if (!a || !a[0] || !this.players.has(voter)) continue;
+        const score = a[0] - a[1];
+        if (!top || score > top.score || (score === top.score && a[0] > top.right)) top = { voter, score, right: a[0] };
+      }
+      if (top) s.kn = [top.voter, top.right];
+      if (s.tw || s.kn) sum[id] = s;
+    }
+    return sum;
   }
 
   // ---- host'un yaptıkları ----
@@ -407,6 +481,7 @@ export class HostGame {
     if ((this.phase !== 'lobby' && this.phase !== 'won') || !this.canStart().ok) return false;
     for (const p of this.players.values()) p.sc = 0;
     this.used.clear();
+    this.know = {};
     this.round = null;
     this.next = null;
     this.win = null;
@@ -462,6 +537,7 @@ export class HostGame {
       // Odadaki herkes "Devam" demeden sıradaki şarkıya geçilmez (kopanlar beklenmez).
       if (active.every((p) => r.cont.includes(p.id))) this.#advance();
     }
+    if (this.rx.length && now > this.rx[0].until) this.rx = this.rx.filter((x) => now <= x.until);
     if (this.ev && now > this.ev.until) {
       this.ev = null;
       this.dirty = true;
@@ -503,6 +579,7 @@ export class HostGame {
     }
     if (this.phase === 'won') st.win = this.win;
     if (this.ev) st.ev = { id: this.ev.id, k: this.ev.k, who: this.ev.who };
+    if (this.rx.length) st.rx = this.rx.map((x) => [x.id, x.p, x.e]);
     return st;
   }
 
@@ -524,6 +601,7 @@ export class HostGame {
       no: this.no,
       win: this.win,
       cd: this.cd,
+      know: this.know,
     };
   }
 
@@ -545,6 +623,7 @@ export class HostGame {
     this.no = s.no || 0;
     this.win = s.win || null;
     this.cd = s.cd || 0;
+    this.know = s.know || {};
     if ((this.phase === 'vote' || this.phase === 'reveal') && !this.round) this.phase = 'lobby';
   }
 }

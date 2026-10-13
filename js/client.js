@@ -80,6 +80,10 @@ export class ClientSession {
     this.send({ t: 'sv' });
   }
 
+  react(e) {
+    this.send({ t: 'rx', e });
+  }
+
   leave() {
     this.gone = true;
     this.send({ t: 'bye' });
