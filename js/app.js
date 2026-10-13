@@ -1576,8 +1576,6 @@ function duelView(st) {
   </main>`;
 }
 
-const g_sug = () => (app.g.sug?.length ? `<ul class="sug">${app.g.sug.map((t, i) => `<li><button type="button" data-act="sug" data-i="${i}"><b>${esc(t.name)}</b><span>${esc(t.artists)}</span></button></li>`).join('')}</ul>` : '');
-
 function contDock(st, P) {
   const rd = st.rd;
   const active = st.pl.filter((p) => p.on);

@@ -238,7 +238,7 @@ export class HostGame {
       if (r.order) r.order = swap(r.order);
       if (r.duel) {
         r.duel = swap(r.duel);
-        for (const map of [r.bets, r.miss]) {
+        for (const map of [r.bets, r.miss, r.jam]) {
           if (!(old in map)) continue;
           map[newId] = map[old];
           delete map[old];
@@ -504,6 +504,13 @@ export class HostGame {
         this.next = null;
         this.#prepare();
       }
+      return;
+    }
+    // Düelloda şarkıyı dinleyen biri kalmadıysa (sahibi odadan çıktıysa) başka şarkı seçilir.
+    if (t && this.set.mode === 'duel' && !this.#listeners(t).length && this.skips < 12) {
+      this.skips++;
+      this.next = null;
+      this.#prepare();
       return;
     }
     this.next = null;
